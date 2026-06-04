@@ -1,0 +1,20 @@
+# Planning docs — kept local, not tracked in public repo
+.planning/
+
+# Dependencies
+node_modules/
+dist/
+build/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
