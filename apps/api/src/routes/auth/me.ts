@@ -8,8 +8,9 @@
  * provide app.authenticate; that pattern requires a custom decorator.
  * This approach satisfies AUTH-04 without extra boilerplate.
  */
-import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify'
+import type { FastifyInstance } from 'fastify'
 
+/** Decoded JWT payload shape for @fastify/jwt request.user */
 interface JwtPayload {
   userId: string
   isGuest: boolean
@@ -35,7 +36,7 @@ export default async function meRoute(app: FastifyInstance): Promise<void> {
         },
       },
     },
-    async (request: FastifyRequest, reply: FastifyReply) => {
+    async (request, reply) => {
       try {
         // jwtVerify() reads the 'session' cookie (configured in jwt plugin)
         // and verifies the JWT signature + expiry. Throws on failure.
@@ -52,7 +53,7 @@ export default async function meRoute(app: FastifyInstance): Promise<void> {
         isGuest: user.isGuest,
       }
 
-      // Only include displayName for guest sessions (it's embedded in the JWT)
+      // Include displayName for guest sessions — it is embedded in the JWT (D-05)
       if (user.isGuest && user.displayName) {
         body.displayName = user.displayName
       }
