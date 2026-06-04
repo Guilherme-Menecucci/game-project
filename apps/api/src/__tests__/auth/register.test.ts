@@ -18,12 +18,11 @@ const { sendMock } = vi.hoisted(() => ({
 
 // Mock resend at the package level — lets the real services/email.ts run
 // but intercepts the HTTP send. This verifies the production code path (D-08 coverage).
+// Using a class (not arrow function) because new Resend() requires a real constructor.
 vi.mock('resend', () => ({
-  Resend: vi.fn(() => ({
-    emails: {
-      send: sendMock,
-    },
-  })),
+  Resend: class MockResend {
+    emails = { send: sendMock }
+  },
 }))
 
 describe('POST /auth/register', () => {

@@ -5,8 +5,18 @@ import { env } from '../env.js'
  * Resend email client singleton (D-08).
  * In NODE_ENV=development, emails are console.logged instead of sent.
  * In NODE_ENV=production, uses resend.emails.send() via RESEND_API_KEY.
+ *
+ * Lazy initialization: Resend is instantiated on first use, not at module load time.
+ * This prevents the constructor from running during test imports where the API key
+ * may be a placeholder value (which Resend rejects at construction with a ByteString error).
  */
-const resend = new Resend(env.RESEND_API_KEY)
+let resendInstance: Resend | null = null
+function getResend(): Resend {
+  if (!resendInstance) {
+    resendInstance = new Resend(env.RESEND_API_KEY)
+  }
+  return resendInstance
+}
 
 const FROM_ADDRESS = 'noreply@' + new URL(env.BASE_URL).hostname
 
@@ -24,7 +34,7 @@ export async function sendPasswordResetEmail(to: string, resetLink: string): Pro
     console.log(`[DEV] Password reset link for ${to}: ${resetLink}`)
     return
   }
-  await resend.emails.send({
+  await getResend().emails.send({
     from: FROM_ADDRESS,
     to,
     subject: 'Reset your password',
@@ -44,7 +54,7 @@ export async function sendVerificationEmail(to: string, verifyLink: string): Pro
     console.log(`[DEV] Email verification link for ${to}: ${verifyLink}`)
     return
   }
-  await resend.emails.send({
+  await getResend().emails.send({
     from: FROM_ADDRESS,
     to,
     subject: 'Verify your email address',
