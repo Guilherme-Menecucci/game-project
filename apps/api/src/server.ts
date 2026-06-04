@@ -39,7 +39,10 @@ export async function buildApp(): Promise<FastifyInstance> {
   const routeDir = fileURLToPath(new URL('./routes/auth/', import.meta.url))
   let routeFiles: string[]
   try {
-    routeFiles = readdirSync(routeDir).filter((f) => f.endsWith('.js'))
+    // Accept both .ts (vitest/dev) and .js (production/compiled) — exclude .d.ts declarations
+    routeFiles = readdirSync(routeDir).filter(
+      (f) => (f.endsWith('.ts') || f.endsWith('.js')) && !f.endsWith('.d.ts')
+    )
   } catch (err: unknown) {
     if (
       typeof err === 'object' &&

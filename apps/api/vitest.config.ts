@@ -14,5 +14,8 @@ export default defineConfig({
   },
   test: {
     environment: 'node',
+    // setupFiles runs before any test file is imported, loading .env into process.env
+    // so env.ts Zod validation succeeds. The .env file is gitignored.
+    setupFiles: ['./src/__tests__/setup.ts'],
   },
 })
