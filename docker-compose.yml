@@ -1,0 +1,35 @@
+# Docker Compose — local development stack
+# Phase 1: PostgreSQL + Redis only.
+# App services (api, game-server, client) will be added in Phase 10 (Infrastructure Hardening).
+# See ROADMAP.md — app Dockerfiles are Phase 10 scope.
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: gamedev
+      POSTGRES_PASSWORD: gamedev
+      POSTGRES_DB: gamedev
+    ports:
+      - '5432:5432'
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U gamedev -d gamedev']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  redis:
+    image: redis:8-alpine
+    ports:
+      - '6379:6379'
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  postgres_data:
