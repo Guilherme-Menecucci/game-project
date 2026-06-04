@@ -5,8 +5,13 @@
  * issues a 30-day persistent cookie, and sends a verification email
  * (D-09 / OQ-3 resolution: email sent but does not block registration).
  *
+ * Security coverage:
+ *   - T-02-15: RegisterSchema.password.max(72) prevents bcrypt 72-byte truncation issue
+ *   - T-02-16: bcrypt.hash(cost:12) — raw password never stored
+ *   - SEC-05: HttpOnly cookie via issueRegisteredCookie (lib/cookies.ts)
+ *
  * Rate limited to 10 req/min per IP (SEC-04, D-11).
- * Uses RegisterSchema from @game/shared for Zod validation before any DB op.
+ * All JWT signing via lib/auth.ts; all cookie ops via lib/cookies.ts (Pattern I).
  */
 import type { FastifyInstance } from 'fastify'
 import bcrypt from 'bcryptjs'

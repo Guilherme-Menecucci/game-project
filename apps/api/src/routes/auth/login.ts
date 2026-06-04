@@ -6,7 +6,13 @@
  * Wrong password and unknown email both return identical 401 response
  * to prevent user enumeration (T-02-17 mitigate).
  *
- * Rate limited to 10 req/min per IP (T-02-13, D-11).
+ * Security coverage:
+ *   - T-02-13: Rate limited to 10/min per IP via @fastify/rate-limit (D-11)
+ *   - T-02-14: INVALID_HASH ensures timing-safe response for unknown emails
+ *   - T-02-17: Identical 401 body for wrong password and unknown email
+ *   - SEC-05: HttpOnly cookie via issueRegisteredCookie (lib/cookies.ts)
+ *
+ * All JWT signing via lib/auth.ts; all cookie ops via lib/cookies.ts (Pattern I).
  */
 import type { FastifyInstance } from 'fastify'
 import bcrypt from 'bcryptjs'

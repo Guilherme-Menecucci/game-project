@@ -10,6 +10,13 @@
  *
  * If JWT missing or not a guest token: 401
  * If email already taken: 409 { error: 'email_taken' }
+ *
+ * Security coverage:
+ *   - T-02-18: jwtVerify() + isGuest===true guard prevents unauthorized upgrade
+ *   - T-02-16: bcrypt.hash(cost:12) — raw password never stored
+ *   - SEC-05: HttpOnly cookie via issueRegisteredCookie (lib/cookies.ts)
+ *
+ * All JWT signing via lib/auth.ts; all cookie ops via lib/cookies.ts (Pattern I).
  */
 import type { FastifyInstance } from 'fastify'
 import bcrypt from 'bcryptjs'
