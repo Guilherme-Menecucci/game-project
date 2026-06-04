@@ -10,10 +10,30 @@ node_modules/
 dist/
 build/
 
-# Environment
+# Environment — never commit real credentials (public repo)
 .env
 .env.local
 .env.*.local
+.env.*
+!.env.example
+
+# Local database files
+*.db
+*.sqlite
+*.sqlite3
+
+# Private keys and certificates
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.cer
+
+# Secrets / credentials dumps
+*.secret
+secrets/
+credentials/
 
 # Logs
 *.log
