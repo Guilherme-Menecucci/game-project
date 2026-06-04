@@ -22,3 +22,12 @@ npm-debug.log*
 # OS
 .DS_Store
 Thumbs.db
+
+# TypeScript build artifacts
+*.tsbuildinfo
+packages/*/dist/
+apps/*/dist/
+
+# Local env overrides
+.env.*
+docker-compose.override.yml
