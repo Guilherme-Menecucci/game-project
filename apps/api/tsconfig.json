@@ -3,10 +3,11 @@
   "compilerOptions": {
     "composite": true,
     "outDir": "./dist",
-    "rootDir": "./src",
+    "rootDir": "./",
     "tsBuildInfoFile": "./dist/.tsbuildinfo",
     "declaration": true,
-    "declarationMap": true
+    "declarationMap": true,
+    "skipLibCheck": true
   },
   "include": ["src/**/*", "drizzle.config.ts"],
   "references": [{ "path": "../../packages/shared" }]
