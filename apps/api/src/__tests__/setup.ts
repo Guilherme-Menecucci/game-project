@@ -1,7 +1,10 @@
 /**
- * Vitest global test setup — loads .env before any test modules are imported.
- * This ensures env.ts Zod validation succeeds during test runs.
- * The .env file is gitignored and holds local dev credentials.
+ * Vitest global test setup — runs before each test file.
+ *
+ * Responsibilities:
+ * 1. Load .env into process.env before env.ts Zod validation runs.
+ * 2. Set NODE_ENV=test so Fastify disables logging during tests.
+ * 3. Flush rate-limit Redis keys to prevent counter bleed across test runs.
  */
 import { readFileSync } from 'fs'
 import { resolve, dirname } from 'path'

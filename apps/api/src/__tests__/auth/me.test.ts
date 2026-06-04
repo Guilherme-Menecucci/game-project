@@ -2,6 +2,15 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import type { FastifyInstance } from 'fastify'
 import { buildApp } from '../../server.js'
 
+// Generate unique IP addresses for this test run to prevent rate-limit bucket
+// pollution between concurrent test files and repeated test runs.
+const runId = process.pid % 65536
+const oct3 = Math.floor(runId / 256) % 256
+const oct4Base = runId % 256
+function testIp(offset: number): string {
+  return `10.2.${oct3}.${(oct4Base + offset) % 256}`
+}
+
 describe('GET /auth/me', () => {
   let app: FastifyInstance
 
@@ -27,6 +36,7 @@ describe('GET /auth/me', () => {
     const guestResponse = await app.inject({
       method: 'POST',
       url: '/auth/guest',
+      remoteAddress: testIp(1),
     })
     expect(guestResponse.statusCode).toBe(200)
 
@@ -52,6 +62,7 @@ describe('GET /auth/me', () => {
     const guestResponse = await app.inject({
       method: 'POST',
       url: '/auth/guest',
+      remoteAddress: testIp(2),
     })
     const guestBody = guestResponse.json<{ userId: string; displayName: string }>()
 
@@ -77,6 +88,7 @@ describe('GET /auth/me', () => {
     const guestResponse = await app.inject({
       method: 'POST',
       url: '/auth/guest',
+      remoteAddress: testIp(3),
     })
     const guestBody = guestResponse.json<{ displayName: string }>()
 
