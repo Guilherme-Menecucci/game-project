@@ -1,6 +1,10 @@
 # Planning docs — kept local, not tracked in public repo
 .planning/
 
+# Project instructions — kept local, not tracked in public repo
+CLAUDE.md
+.claude/
+
 # Dependencies
 node_modules/
 dist/
