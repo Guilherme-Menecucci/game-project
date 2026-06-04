@@ -49,5 +49,6 @@ packages/*/dist/
 apps/*/dist/
 
 # Local env overrides
-.env.*
+.env.local
+.env.*.local
 docker-compose.override.yml
