@@ -9,6 +9,7 @@ interface AuthInputProps {
   error?: string
   value: string
   onChange: (e: React.ChangeEvent<HTMLInputElement>) => void
+  onBlur?: () => void
 }
 
 export function AuthInput({
@@ -20,6 +21,7 @@ export function AuthInput({
   error,
   value,
   onChange,
+  onBlur,
 }: AuthInputProps) {
   return (
     <div className={styles.field}>
@@ -34,6 +36,7 @@ export function AuthInput({
         placeholder={placeholder}
         value={value}
         onChange={onChange}
+        onBlur={onBlur}
         aria-describedby={error ? `${name}-error` : helperText ? `${name}-helper` : undefined}
       />
       {error ? (
