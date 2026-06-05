@@ -4,13 +4,14 @@
  * GET /auth/verify/:token
  *   Reads a verify token from Redis, sets verifiedAt timestamp, redirects to /.
  *   Invalid or expired tokens redirect to /?verified=false (T-02-23 mitigate).
- *   Token is single-use: deleted from Redis after first successful verify.
+ *   Token is single-use: deleted from Redis after first successful verify (T-02-23).
  *
  * This route is the receiving end of the verify link emailed during registration
  * (POST /auth/register in 02-04 stores the verify token). This plan does NOT
  * modify register.ts — only implements the token redemption endpoint.
  *
- * Redis key pattern: 'verify:{token}' → JSON({ accountId }), TTL=VERIFY_TOKEN_TTL
+ * Redis key pattern: 'verify:{token}' → JSON({ accountId }), TTL=VERIFY_TOKEN_TTL (86400s)
+ * Token format: generateHexToken(32) = 64-char hex string (256-bit entropy)
  */
 import type { FastifyInstance } from 'fastify'
 import { eq } from 'drizzle-orm'

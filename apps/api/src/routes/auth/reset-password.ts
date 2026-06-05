@@ -8,7 +8,8 @@
  * POST /auth/reset-password/confirm — apply new password using reset token
  *   Token is single-use: deleted from Redis after first successful confirm (T-02-21)
  *
- * Redis key pattern: 'reset:{token}' → JSON({ accountId, email }), TTL=RESET_TOKEN_TTL (T-02-20)
+ * Redis key pattern: 'reset:{token}' → JSON({ accountId, email }), TTL=RESET_TOKEN_TTL (900s)
+ * Token format: generateHexToken(32) = 64-char hex string (256-bit entropy, T-02-20)
  */
 import type { FastifyInstance } from 'fastify'
 import * as z from 'zod'
