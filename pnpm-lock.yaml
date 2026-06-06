@@ -90,9 +90,15 @@ importers:
 
   apps/client:
     dependencies:
+      '@colyseus/sdk':
+        specifier: 0.17.42
+        version: 0.17.42(@colyseus/core@0.17.42)(typescript@6.0.3)(zod@4.4.3)
       '@game/shared':
         specifier: workspace:*
         version: link:../../packages/shared
+      phaser:
+        specifier: 3.90.0
+        version: 3.90.0
       react:
         specifier: 19.2.7
         version: 19.2.7
@@ -2207,6 +2213,9 @@ packages:
 
   pathe@2.0.3:
     resolution: {integrity: sha512-WUjGcAqP1gQacoQe+OBJsFA7Ld4DyXuUIjZ5cc75cLHvJ7dtNsTugphxIADwspS+AraAUePCKrSVtPLFj/F88w==}
+
+  phaser@3.90.0:
+    resolution: {integrity: sha512-/cziz/5ZIn02uDkC9RzN8VF9x3Gs3XdFFf9nkiMEQT3p7hQlWuyjy4QWosU802qqno2YSLn2BfqwOKLv/sSVfQ==}
 
   picocolors@1.1.1:
     resolution: {integrity: sha512-xceH2snhtb5M9liqDsmEw56le376mTZkEX/jEb/RxNFyegNul7eNslCXP9FDj/Lcu0X8KEyMceP2ntpaHrDEVA==}
@@ -4557,6 +4566,10 @@ snapshots:
   path-to-regexp@0.1.12: {}
 
   pathe@2.0.3: {}
+
+  phaser@3.90.0:
+    dependencies:
+      eventemitter3: 5.0.4
 
   picocolors@1.1.1: {}
 

@@ -6,7 +6,7 @@ import { LoginPage } from './pages/LoginPage.js'
 import { RegisterPage } from './pages/RegisterPage.js'
 import { ResetPasswordRequestPage } from './pages/ResetPasswordRequestPage.js'
 import { ResetPasswordConfirmPage } from './pages/ResetPasswordConfirmPage.js'
-import { GameStubPage } from './pages/GameStubPage.js'
+import { GamePage } from './pages/GamePage.js'
 
 export default function App() {
   return (
@@ -22,7 +22,7 @@ export default function App() {
             path="/game"
             element={
               <ProtectedRoute>
-                <GameStubPage />
+                <GamePage />
               </ProtectedRoute>
             }
           />

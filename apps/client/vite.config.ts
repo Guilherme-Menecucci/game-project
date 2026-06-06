@@ -9,6 +9,12 @@ export default defineConfig({
         target: 'http://localhost:3000',
         rewrite: (path) => path.replace(/^\/api/, ''),
       },
+      '/colyseus': {
+        target: 'ws://localhost:2567',
+        ws: true,
+        rewriteWsOrigin: true,
+        rewrite: (path) => path.replace(/^\/colyseus/, ''),
+      },
     },
   },
 })
