@@ -3,7 +3,26 @@
   "version": "0.0.1",
   "private": true,
   "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "start": "node dist/server.js",
+    "test": "vitest run"
+  },
   "dependencies": {
+    "@colyseus/core": "0.17.42",
+    "@colyseus/schema": "4.0.26",
+    "@colyseus/tools": "0.17.19",
+    "@colyseus/ws-transport": "0.17.13",
+    "jsonwebtoken": "9.0.2",
+    "zod": "4.4.3",
     "@game/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "@colyseus/testing": "0.17.11",
+    "@types/jsonwebtoken": "9.0.9",
+    "tsx": "4.22.4",
+    "vitest": "4.1.8",
+    "@vitest/coverage-v8": "4.1.8",
+    "typescript": "6.0.3"
   }
 }
