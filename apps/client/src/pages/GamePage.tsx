@@ -7,9 +7,12 @@ import { PhaserGame } from '../components/game/PhaserGame.js'
 import type { GameOverData } from '../components/game/PhaserGame.js'
 import { GameHUD } from '../components/game/GameHUD.js'
 import { GameOverScreen } from '../components/game/GameOverScreen.js'
+import { UpgradePicker } from '../components/ui/UpgradePicker.js'
+import { SlotFullModal } from '../components/ui/SlotFullModal.js'
+import type { UpgradeOption } from '@game/shared'
 import styles from './GamePage.module.css'
 
-export type GamePhase = 'IDLE' | 'CONNECTING' | 'ACTIVE' | 'GAME-OVER'
+export type GamePhase = 'IDLE' | 'CONNECTING' | 'ACTIVE' | 'UPGRADING' | 'SLOT_FULL' | 'GAME-OVER'
 
 export type GameError =
   | 'SESSION_EXPIRED'
@@ -23,6 +26,11 @@ export function GamePage() {
   const [phase, setPhase] = useState<GamePhase>('IDLE')
   const [error, setError] = useState<GameError>(null)
   const roomRef = useRef<Room | null>(null)
+  const [pendingChoices, setPendingChoices] = useState<UpgradeOption[]>([])
+  const [slotFullPayload, setSlotFullPayload] = useState<{
+    weapons: string[]
+    upgradeId: string
+  } | null>(null)
 
   // Final stats captured from game-over event (populated on GAME-OVER transition)
   const [finalStats, setFinalStats] = useState<GameOverData>({
@@ -65,6 +73,23 @@ export function GamePage() {
       const client = new Client('/colyseus')
       const room = await client.joinOrCreate<unknown>('solo_room', { token })
       roomRef.current = room as Room
+
+      // Add progression listeners
+      room.onMessage('levelup', (data: { options: UpgradeOption[] }) => {
+        setPendingChoices(data.options)
+        setPhase('UPGRADING')
+      })
+
+      room.onMessage('slot_full', (data: { weapons: string[]; upgradeId: string }) => {
+        setSlotFullPayload(data)
+        setPhase('SLOT_FULL')
+      })
+
+      room.onMessage('rare_event', (data: { options: UpgradeOption[] }) => {
+        setPendingChoices(data.options)
+        setPhase('UPGRADING')
+      })
+
       setPhase('ACTIVE')
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
@@ -81,6 +106,20 @@ export function GamePage() {
         setError('SERVER_ERROR')
       }
       setPhase('IDLE')
+    }
+  }
+
+  function handleUpgradeSelect(upgradeId: string) {
+    roomRef.current?.send('upgrade_selected', { upgradeId })
+    setPhase('ACTIVE')
+    setPendingChoices([])
+  }
+
+  function handleReplace(slot: number) {
+    if (slotFullPayload) {
+      roomRef.current?.send('replace_slot', { slot, upgradeId: slotFullPayload.upgradeId })
+      setPhase('ACTIVE')
+      setSlotFullPayload(null)
     }
   }
 
@@ -106,11 +145,22 @@ export function GamePage() {
           onSoloRun={() => void handleSoloRun()}
         />
       )}
-      {phase === 'ACTIVE' && roomRef.current && (
-        <>
-          <PhaserGame room={roomRef.current} onGameOver={handleGameOver} />
-          <GameHUD room={roomRef.current} />
-        </>
+      {(phase === 'ACTIVE' || phase === 'UPGRADING' || phase === 'SLOT_FULL') &&
+        roomRef.current && (
+          <>
+            <PhaserGame room={roomRef.current} onGameOver={handleGameOver} />
+            <GameHUD room={roomRef.current} />
+          </>
+        )}
+      {phase === 'UPGRADING' && (
+        <UpgradePicker options={pendingChoices} onSelect={handleUpgradeSelect} />
+      )}
+      {phase === 'SLOT_FULL' && slotFullPayload && (
+        <SlotFullModal
+          weapons={slotFullPayload.weapons}
+          upgradeId={slotFullPayload.upgradeId}
+          onReplace={handleReplace}
+        />
       )}
       {phase === 'GAME-OVER' && (
         <GameOverScreen

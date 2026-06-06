@@ -28,6 +28,7 @@ export class GameScene extends Phaser.Scene {
   private enemySprites = new Map<string, Phaser.GameObjects.Sprite>()
   private gemSprites = new Map<string, Phaser.GameObjects.Sprite>()
   private projectileSprites = new Map<string, Phaser.GameObjects.Sprite>()
+  private pickupsGraphics!: Phaser.GameObjects.Graphics
 
   private cursors!: Phaser.Types.Input.Keyboard.CursorKeys
   private wasd!: {
@@ -55,6 +56,9 @@ export class GameScene extends Phaser.Scene {
     this.cameras.main.setBackgroundColor('#1e2030')
 
     this.game.registry.set('killCount', 0)
+
+    this.pickupsGraphics = this.add.graphics()
+    this.pickupsGraphics.setDepth(0.5)
 
     this.cursors = this.input.keyboard!.createCursorKeys()
     this.wasd = {
@@ -185,6 +189,45 @@ export class GameScene extends Phaser.Scene {
       if (!projectiles.has(key)) {
         this.projectileSprites.get(key)!.destroy()
         this.projectileSprites.delete(key)
+      }
+    }
+
+    // --- Pickups ---
+    this.pickupsGraphics.clear()
+    interface PickupData {
+      x: number
+      y: number
+      kind: 'health_orb' | 'xp_magnet' | 'screen_bomb'
+    }
+    const pickups = (state.pickups as Map<string, PickupData>) || new Map()
+    for (const pickup of pickups.values()) {
+      const screenX = toGU(pickup.x)
+      const screenY = toGU(pickup.y)
+      if (pickup.kind === 'health_orb') {
+        this.pickupsGraphics.fillStyle(0x4ade80, 1)
+        this.pickupsGraphics.fillCircle(screenX, screenY, 8)
+      } else if (pickup.kind === 'xp_magnet') {
+        this.pickupsGraphics.fillStyle(0x60a5fa, 1)
+        this.pickupsGraphics.beginPath()
+        this.pickupsGraphics.moveTo(screenX, screenY - 10)
+        this.pickupsGraphics.lineTo(screenX + 8, screenY)
+        this.pickupsGraphics.lineTo(screenX, screenY + 10)
+        this.pickupsGraphics.lineTo(screenX - 8, screenY)
+        this.pickupsGraphics.closePath()
+        this.pickupsGraphics.fillPath()
+      } else if (pickup.kind === 'screen_bomb') {
+        this.pickupsGraphics.fillStyle(0xfb923c, 1)
+        this.pickupsGraphics.beginPath()
+        this.pickupsGraphics.moveTo(screenX, screenY - 12)
+        this.pickupsGraphics.lineTo(screenX + 3, screenY - 3)
+        this.pickupsGraphics.lineTo(screenX + 12, screenY)
+        this.pickupsGraphics.lineTo(screenX + 3, screenY + 3)
+        this.pickupsGraphics.lineTo(screenX, screenY + 12)
+        this.pickupsGraphics.lineTo(screenX - 3, screenY + 3)
+        this.pickupsGraphics.lineTo(screenX - 12, screenY)
+        this.pickupsGraphics.lineTo(screenX - 3, screenY - 3)
+        this.pickupsGraphics.closePath()
+        this.pickupsGraphics.fillPath()
       }
     }
   }
