@@ -51,7 +51,6 @@ export class GameScene extends Phaser.Scene {
     this.room = data.room
     this.localPlayerId = this.room.sessionId
 
-    this.physics.world.setBounds(0, 0, 4096, 4096)
     this.cameras.main.setBounds(0, 0, 4096, 4096)
     this.cameras.main.setBackgroundColor('#1e2030')
 
