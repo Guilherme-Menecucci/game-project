@@ -26,6 +26,7 @@ import type {
   PlainEnemyState,
   PlainGemState,
   PlainProjectileState,
+  PlainPickupState,
 } from './state.js'
 import { PlayerInputSchema } from './schemas.js'
 import type { PlayerInput } from './schemas.js'
@@ -53,7 +54,7 @@ export const SPEED_SUBUNITS = 10_000
 function cloneState(state: PlainGameState): PlainGameState {
   const players = new Map<string, PlainPlayerState>()
   for (const [id, p] of state.players) {
-    players.set(id, { ...p })
+    players.set(id, { ...p, weapons: [...p.weapons], passives: [...p.passives] })
   }
   const enemies = new Map<string, PlainEnemyState>()
   for (const [id, e] of state.enemies) {
@@ -67,6 +68,10 @@ function cloneState(state: PlainGameState): PlainGameState {
   for (const [id, pr] of state.projectiles) {
     projectiles.set(id, { ...pr })
   }
+  const pickups = new Map<string, PlainPickupState>()
+  for (const [id, pk] of state.pickups) {
+    pickups.set(id, { ...pk })
+  }
   return {
     tick: state.tick,
     elapsedMs: state.elapsedMs,
@@ -74,6 +79,7 @@ function cloneState(state: PlainGameState): PlainGameState {
     enemies,
     gems,
     projectiles,
+    pickups,
     prngSeed: state.prngSeed,
   }
 }

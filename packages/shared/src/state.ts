@@ -9,6 +9,13 @@
 
 import { WORLD_W, WORLD_H } from './spatialGrid.js'
 
+export type PlainPickupState = {
+  id: string
+  x: number
+  y: number
+  kind: 'health_orb' | 'xp_magnet' | 'screen_bomb'
+}
+
 export type PlainPlayerState = {
   id: string
   x: number
@@ -18,6 +25,8 @@ export type PlainPlayerState = {
   level: number
   xp: number
   speed: number
+  weapons: string[]
+  passives: string[]
 }
 
 export type PlainEnemyState = {
@@ -57,6 +66,7 @@ export type PlainGameState = {
   enemies: Map<string, PlainEnemyState>
   gems: Map<string, PlainGemState>
   projectiles: Map<string, PlainProjectileState>
+  pickups: Map<string, PlainPickupState>
   prngSeed: number
 }
 
@@ -78,6 +88,8 @@ export function makeInitialState(seed: number): PlainGameState {
     level: 1,
     xp: 0,
     speed: 10_000, // sub-units per tick at 20Hz
+    weapons: [],
+    passives: [],
   }
 
   return {
@@ -87,6 +99,7 @@ export function makeInitialState(seed: number): PlainGameState {
     enemies: new Map(),
     gems: new Map(),
     projectiles: new Map(),
+    pickups: new Map(),
     prngSeed: seed,
   }
 }

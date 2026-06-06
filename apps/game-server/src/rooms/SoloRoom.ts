@@ -114,6 +114,8 @@ export class SoloRoom extends Room<{ state: GameStateSchema }> {
       level: 1,
       xp: 0,
       speed: 10_000,
+      weapons: [],
+      passives: [],
     }
 
     this.plainState.players.set(client.sessionId, player)

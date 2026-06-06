@@ -42,3 +42,15 @@ export const GuestTokenResponseSchema = z.object({
   displayName: z.string(),
 })
 export type GuestTokenResponse = z.infer<typeof GuestTokenResponseSchema>
+
+// Phase 4 Schemas
+export const UpgradeSelectedSchema = z.object({
+  upgradeId: z.string(),
+})
+export type UpgradeSelected = z.infer<typeof UpgradeSelectedSchema>
+
+export const ReplaceSlotSchema = z.object({
+  slot: z.number().int().min(0).max(5),
+  upgradeId: z.string(),
+})
+export type ReplaceSlot = z.infer<typeof ReplaceSlotSchema>
