@@ -38,10 +38,18 @@ export class GemSchema extends Schema {
   @type('uint8') declare value: number
 }
 
+export class ProjectileSchema extends Schema {
+  @type('string') declare id: string
+  @type('uint32') declare x: number // sub-unit coordinate (0..4,095,999)
+  @type('uint32') declare y: number
+  @type('boolean') declare isEnemy: boolean // true = ranged enemy projectile (GAME-05)
+}
+
 export class GameStateSchema extends Schema {
   @type({ map: PlayerSchema }) declare players: MapSchema<PlayerSchema>
   @type({ map: EnemySchema }) declare enemies: MapSchema<EnemySchema>
   @type({ map: GemSchema }) declare gems: MapSchema<GemSchema>
+  @type({ map: ProjectileSchema }) declare projectiles: MapSchema<ProjectileSchema>
   @type('uint32') declare tick: number
   @type('uint32') declare elapsedMs: number
 
@@ -50,6 +58,7 @@ export class GameStateSchema extends Schema {
     this.players = new MapSchema<PlayerSchema>()
     this.enemies = new MapSchema<EnemySchema>()
     this.gems = new MapSchema<GemSchema>()
+    this.projectiles = new MapSchema<ProjectileSchema>()
     this.tick = 0
     this.elapsedMs = 0
   }

@@ -22,7 +22,13 @@ import {
   WORLD_H,
 } from '@game/shared'
 import type { PlainGameState, PlainPlayerState, PlayerInput, Prng } from '@game/shared'
-import { GameStateSchema, PlayerSchema, EnemySchema, GemSchema } from '../schema/GameSchema.js'
+import {
+  GameStateSchema,
+  PlayerSchema,
+  EnemySchema,
+  GemSchema,
+  ProjectileSchema,
+} from '../schema/GameSchema.js'
 import { verifyGameToken } from '../lib/gameToken.js'
 
 export class SoloRoom extends Room<{ state: GameStateSchema }> {
@@ -232,6 +238,28 @@ function mirrorStateToSchema(plain: PlainGameState, schema: GameStateSchema): vo
   for (const id of schema.gems.keys()) {
     if (!plain.gems.has(id)) {
       schema.gems.delete(id)
+    }
+  }
+
+  // --- Projectiles: mutate existing, add new, delete removed ---
+  for (const [id, pr] of plain.projectiles) {
+    if (schema.projectiles.has(id)) {
+      const prs = schema.projectiles.get(id)!
+      prs.x = pr.x
+      prs.y = pr.y
+      prs.isEnemy = pr.isEnemy
+    } else {
+      const prs = new ProjectileSchema()
+      prs.id = id
+      prs.x = pr.x
+      prs.y = pr.y
+      prs.isEnemy = pr.isEnemy
+      schema.projectiles.set(id, prs)
+    }
+  }
+  for (const id of schema.projectiles.keys()) {
+    if (!plain.projectiles.has(id)) {
+      schema.projectiles.delete(id)
     }
   }
 }
