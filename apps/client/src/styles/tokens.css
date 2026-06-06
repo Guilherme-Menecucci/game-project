@@ -41,6 +41,15 @@
   --color-hud-backing: rgba(14, 15, 20, 0.75); /* Semi-opaque HUD cluster backing */
 }
 
+/* ─── Phase 4 game-specific tokens ─── */
+:root {
+  --color-upgrade-weapon: #4a9eff;
+  --color-upgrade-passive: #44cc88;
+  --color-upgrade-evolution: #ffcc00;
+  --color-card-base: #1a1a2e;
+  --color-slot-empty: #2a2a3e;
+}
+
 body {
   margin: 0;
   background: var(--color-bg);
