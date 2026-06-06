@@ -14,3 +14,6 @@ export * from './spatialGrid.js'
 // Real implementations (Task 2: 03-02)
 export * from './simulateTick.js'
 export * from './spawn.js'
+
+// Real implementations (Task 1: 03-06)
+export * from './weapons.js'
