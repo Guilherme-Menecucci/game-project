@@ -51,7 +51,7 @@ export const SPEED_SUBUNITS = 10_000
  * Deep-clone a PlainGameState without mutating the original.
  * Uses manual Map copying to handle the Map-based collections.
  */
-function cloneState(state: PlainGameState): PlainGameState {
+export function cloneState(state: PlainGameState): PlainGameState {
   const players = new Map<string, PlainPlayerState>()
   for (const [id, p] of state.players) {
     players.set(id, { ...p, weapons: [...p.weapons], passives: [...p.passives] })
