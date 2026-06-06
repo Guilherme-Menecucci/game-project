@@ -1,0 +1,12 @@
+.link {
+  font-size: var(--text-label);
+  font-weight: 400;
+  color: var(--color-text-muted);
+  text-decoration: none;
+  transition: color 0.15s ease;
+}
+
+.link:hover {
+  color: var(--color-text);
+  text-decoration: underline;
+}

@@ -1,0 +1,38 @@
+:root {
+  /* Color tokens from UI-SPEC §Color */
+  --color-bg: #0e0f14;
+  --color-surface: #1a1c25;
+  --color-accent: #6c63ff;
+  --color-accent-hover: #5a52e0;
+  --color-destructive: #e05252;
+  --color-text: #f0f0f5;
+  --color-text-muted: #8a8a9a;
+  --color-border: #2a2c38;
+  --color-border-focus: #6c63ff;
+  --color-error: #e05252;
+
+  /* Spacing tokens from UI-SPEC §Spacing */
+  --space-xs: 4px;
+  --space-sm: 8px;
+  --space-md: 16px;
+  --space-lg: 24px;
+  --space-xl: 32px;
+  --space-2xl: 48px;
+  --space-3xl: 64px;
+
+  /* Typography tokens from UI-SPEC §Typography */
+  --text-body: 16px;
+  --text-label: 14px;
+  --text-heading: 24px;
+  --text-display: 36px;
+
+  /* Font stack from UI-SPEC §Design System */
+  --font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+body {
+  margin: 0;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-family);
+}
