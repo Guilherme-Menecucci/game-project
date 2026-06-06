@@ -42,7 +42,8 @@ export default async function meRoute(app: FastifyInstance): Promise<void> {
         // and verifies the JWT signature + expiry. Throws on failure.
         await request.jwtVerify()
       } catch {
-        return reply.code(401).send({ message: 'Unauthorized' })
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        return (reply as any).code(401).send({ message: 'Unauthorized' })
       }
 
       const user = request.user as JwtPayload
