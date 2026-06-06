@@ -89,11 +89,10 @@ export class SoloRoom extends Room<{ state: GameStateSchema }> {
    */
   static async onAuth(
     token: string,
-    options: unknown,
+    options: { token?: string },
     context: { token?: string }
   ): Promise<{ userId: string }> {
-    void options
-    const authToken = context.token ?? token
+    const authToken = context.token ?? options?.token ?? token
     if (!authToken) {
       throw new Error('Missing game token')
     }
