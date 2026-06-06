@@ -9,8 +9,16 @@
  * Diagonal speed normalized to [9900, 10100] sub-units via integer Math.round.
  * Toroidal world wrap: x = ((x % WORLD_W) + WORLD_W) % WORLD_W
  *
- * Enemy movement toward nearest player (toroidal) — will be replaced by
- * applyEnemyAI in plan 03-06 (see action note about double-movement risk).
+ * Tick order (plan 03-06):
+ *   1. Player movement
+ *   2. applyEnemyAI (replaces inline placeholder from 03-02)
+ *   3. spawnEnemies
+ *   4. autoFire
+ *   5. applyProjectileMovement
+ *   6. applyCollisions
+ *   7. applyEnemyContactDamage
+ *   8. applyGemCollection
+ *   9. applyLevelUp
  */
 import type {
   PlainGameState,
@@ -24,6 +32,15 @@ import type { PlayerInput } from './schemas.js'
 import type { Prng } from './prng.js'
 import { WORLD_W, WORLD_H } from './spatialGrid.js'
 import { spawnEnemies } from './spawn.js'
+import {
+  autoFire,
+  applyEnemyAI,
+  applyProjectileMovement,
+  applyCollisions,
+  applyEnemyContactDamage,
+  applyGemCollection,
+  applyLevelUp,
+} from './weapons.js'
 
 export { WORLD_W, WORLD_H }
 export const TICK_SEC = 1 / 20
@@ -66,17 +83,6 @@ function cloneState(state: PlainGameState): PlainGameState {
  */
 function toroidal(x: number, size: number): number {
   return ((x % size) + size) % size
-}
-
-/**
- * Compute toroidal distance component (shortest path on a torus).
- */
-function toroidalDelta(a: number, b: number, size: number): number {
-  let delta = b - a
-  if (Math.abs(delta) > size / 2) {
-    delta = delta > 0 ? delta - size : delta + size
-  }
-  return delta
 }
 
 /**
@@ -128,48 +134,29 @@ export function simulateTick(
     newState.players.set(playerId, player)
   }
 
-  // 4. Enemy movement toward nearest player (placeholder — replaced by applyEnemyAI in plan 03-06)
-  // IMPORTANT: When wiring 03-06, REMOVE this entire block before adding applyEnemyAI.
-  // Leaving both active causes double-movement (2x speed) bug.
-  for (const [enemyId, enemy] of newState.enemies) {
-    if (newState.players.size === 0) continue
-
-    // Find nearest player using toroidal distance
-    let nearestPlayer: PlainPlayerState | null = null
-    let nearestDistSq = Infinity
-
-    for (const player of newState.players.values()) {
-      const adx = Math.abs(enemy.x - player.x)
-      const ady = Math.abs(enemy.y - player.y)
-      const tdx = adx > WORLD_W / 2 ? WORLD_W - adx : adx
-      const tdy = ady > WORLD_H / 2 ? WORLD_H - ady : ady
-      const distSq = tdx * tdx + tdy * tdy
-      if (distSq < nearestDistSq) {
-        nearestDistSq = distSq
-        nearestPlayer = player
-      }
-    }
-
-    if (nearestPlayer === null) continue
-
-    // Direction toward player (toroidal shortest path)
-    const dx = toroidalDelta(enemy.x, nearestPlayer.x, WORLD_W)
-    const dy = toroidalDelta(enemy.y, nearestPlayer.y, WORLD_H)
-    const mag = Math.sqrt(dx * dx + dy * dy)
-
-    if (mag === 0) continue
-
-    const vx = Math.round((dx * enemy.speed) / mag)
-    const vy = Math.round((dy * enemy.speed) / mag)
-
-    enemy.x = toroidal(enemy.x + vx, WORLD_W)
-    enemy.y = toroidal(enemy.y + vy, WORLD_H)
-
-    newState.enemies.set(enemyId, enemy)
-  }
+  // 4. Enemy AI (replaces inline placeholder from plan 03-02 — do NOT run both)
+  newState = applyEnemyAI(newState)
 
   // 5. Spawn enemies
   newState = spawnEnemies(newState, prng)
+
+  // 6. Auto-fire player projectiles toward nearest enemy
+  newState = autoFire(newState, prng)
+
+  // 7. Move all projectiles
+  newState = applyProjectileMovement(newState)
+
+  // 8. Projectile collisions (player proj→enemy, enemy proj→player)
+  newState = applyCollisions(newState)
+
+  // 9. Enemy contact damage to players
+  newState = applyEnemyContactDamage(newState)
+
+  // 10. Gem collection (attract + snap-collect)
+  newState = applyGemCollection(newState)
+
+  // 11. Level-up check
+  newState = applyLevelUp(newState)
 
   return newState
 }
