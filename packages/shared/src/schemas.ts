@@ -1,0 +1,44 @@
+/**
+ * Game input and auth schemas — shared Zod validators.
+ * Separated from index.ts so game simulation files can import
+ * PlayerInputSchema without creating a circular dependency.
+ */
+import * as z from 'zod'
+
+// Game input schemas (Phase 1)
+export const PlayerInputSchema = z.object({
+  moveVector: z.object({
+    x: z.number(),
+    y: z.number(),
+  }),
+  aimAngle: z.number(),
+  actionFlags: z.number().int(),
+  // D-02: Anti-replay sequence number — monotone per client connection.
+  // Optional in Phase 3 for backward compat; will be required in Phase 4.
+  seq: z.number().int().min(0).optional(),
+  // D-02: Server tick reference — ties input snapshot to the authoritative tick.
+  // Optional in Phase 3 for backward compat; will be required in Phase 4.
+  tick: z.number().int().min(0).optional(),
+})
+
+export type PlayerInput = z.infer<typeof PlayerInputSchema>
+
+// Auth schemas (Phase 2)
+export const LoginSchema = z.object({
+  email: z.email(),
+  password: z.string().min(8),
+})
+export type Login = z.infer<typeof LoginSchema>
+
+export const RegisterSchema = z.object({
+  email: z.email(),
+  password: z.string().min(8).max(72),
+})
+export type Register = z.infer<typeof RegisterSchema>
+
+export const GuestTokenResponseSchema = z.object({
+  userId: z.uuid(),
+  isGuest: z.literal(true),
+  displayName: z.string(),
+})
+export type GuestTokenResponse = z.infer<typeof GuestTokenResponseSchema>
