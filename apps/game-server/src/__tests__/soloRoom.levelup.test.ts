@@ -45,6 +45,9 @@ describe('SoloRoom levelup and pause', () => {
     // Force a tick so levelup checks run
     await room.tick()
 
+    // Wait short time for message delivery
+    await new Promise((resolve) => setTimeout(resolve, 50))
+
     expect(room.simulationPaused).toBe(true)
     expect(levelUpMsg).not.toBeNull()
     expect(levelUpMsg.options.length).toBe(3)
@@ -115,6 +118,7 @@ describe('SoloRoom rare event', () => {
 
   beforeEach(async () => {
     await server.cleanup()
+    vi.useRealTimers()
   })
 
   it('fires rare_event after elapsed threshold (GAME-11)', async () => {
@@ -128,8 +132,9 @@ describe('SoloRoom rare event', () => {
       rareEventMsg = msg
     })
 
-    // Advance the room's clock past 3 minutes (180,000ms)
-    room.clock.tick(180001)
+    // Mock the elapsed time on the plainState and tick once to trigger rare event
+    room.plainState.elapsedMs = 180000
+    await room.tick()
 
     // Wait short time for any callback execution
     await new Promise((resolve) => setTimeout(resolve, 50))

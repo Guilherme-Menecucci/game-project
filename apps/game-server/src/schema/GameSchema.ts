@@ -11,7 +11,7 @@
  * references — Colyseus delta encoder tracks the MapSchema instance.
  * Replacing the object triggers full re-encode, breaking delta compression.
  */
-import { Schema, type, MapSchema } from '@colyseus/schema'
+import { Schema, type, MapSchema, ArraySchema } from '@colyseus/schema'
 
 export class PlayerSchema extends Schema {
   @type('string') declare id: string
@@ -21,6 +21,8 @@ export class PlayerSchema extends Schema {
   @type('uint8') declare maxHp: number
   @type('uint8') declare level: number // max 255 — level cap fits
   @type('uint8') declare xp: number // xp within current level (resets at threshold)
+  @type(['string']) weapons = new ArraySchema<string>()
+  @type(['string']) passives = new ArraySchema<string>()
 }
 
 export class EnemySchema extends Schema {
@@ -45,11 +47,19 @@ export class ProjectileSchema extends Schema {
   @type('boolean') declare isEnemy: boolean // true = ranged enemy projectile (GAME-05)
 }
 
+export class PickupSchema extends Schema {
+  @type('string') declare id: string
+  @type('uint32') declare x: number
+  @type('uint32') declare y: number
+  @type('string') declare kind: string // 'health_orb' | 'xp_magnet' | 'screen_bomb'
+}
+
 export class GameStateSchema extends Schema {
   @type({ map: PlayerSchema }) declare players: MapSchema<PlayerSchema>
   @type({ map: EnemySchema }) declare enemies: MapSchema<EnemySchema>
   @type({ map: GemSchema }) declare gems: MapSchema<GemSchema>
   @type({ map: ProjectileSchema }) declare projectiles: MapSchema<ProjectileSchema>
+  @type({ map: PickupSchema }) declare pickups: MapSchema<PickupSchema>
   @type('uint32') declare tick: number
   @type('uint32') declare elapsedMs: number
 
@@ -59,6 +69,7 @@ export class GameStateSchema extends Schema {
     this.enemies = new MapSchema<EnemySchema>()
     this.gems = new MapSchema<GemSchema>()
     this.projectiles = new MapSchema<ProjectileSchema>()
+    this.pickups = new MapSchema<PickupSchema>()
     this.tick = 0
     this.elapsedMs = 0
   }
