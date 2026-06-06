@@ -41,6 +41,7 @@ import {
   applyEnemyContactDamage,
   applyGemCollection,
   applyLevelUp,
+  applyPickupCollection,
 } from './weapons.js'
 
 export { WORLD_W, WORLD_H }
@@ -153,7 +154,7 @@ export function simulateTick(
   newState = applyProjectileMovement(newState)
 
   // 8. Projectile collisions (player proj→enemy, enemy proj→player)
-  newState = applyCollisions(newState)
+  newState = applyCollisions(newState, prng)
 
   // 9. Enemy contact damage to players
   newState = applyEnemyContactDamage(newState)
@@ -161,7 +162,10 @@ export function simulateTick(
   // 10. Gem collection (attract + snap-collect)
   newState = applyGemCollection(newState)
 
-  // 11. Level-up check
+  // 11. Pickup collection (proximity collection)
+  newState = applyPickupCollection(newState)
+
+  // 12. Level-up check
   newState = applyLevelUp(newState)
 
   return newState

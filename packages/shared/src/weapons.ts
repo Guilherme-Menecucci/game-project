@@ -22,7 +22,7 @@
 import type { PlainGameState, PlainPlayerState, PlainEnemyState } from './state.js'
 import { UniformGrid, WORLD_W, WORLD_H } from './spatialGrid.js'
 import type { Prng } from './prng.js'
-import { XP_PER_ARCHETYPE } from './spawn.js'
+import { XP_PER_ARCHETYPE, rollPickupDrop } from './spawn.js'
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -293,11 +293,12 @@ export function applyProjectileMovement(state: PlainGameState): PlainGameState {
  *
  * T-3-05 mitigation: HP decremented server-side only from authoritative state.
  */
-export function applyCollisions(state: PlainGameState): PlainGameState {
+export function applyCollisions(state: PlainGameState, prng: Prng): PlainGameState {
   const newEnemies = new Map(state.enemies)
   const newPlayers = new Map(state.players)
   const newProjectiles = new Map(state.projectiles)
   const newGems = new Map(state.gems)
+  const newPickups = new Map(state.pickups)
   let changed = false
 
   // ── Pass 1: Player projectiles vs enemies ──
@@ -328,6 +329,11 @@ export function applyCollisions(state: PlainGameState): PlainGameState {
             y: enemy.y,
             value: xpValue,
           })
+
+          const pickup = rollPickupDrop(enemy.archetype, enemy.x, enemy.y, prng)
+          if (pickup !== null) {
+            newPickups.set(pickup.id, pickup)
+          }
         } else {
           newEnemies.set(enemyId, { ...enemy, hp: updatedHp })
         }
@@ -367,7 +373,12 @@ export function applyCollisions(state: PlainGameState): PlainGameState {
     }
   }
 
-  if (!changed && newEnemies.size === state.enemies.size && newGems.size === state.gems.size) {
+  if (
+    !changed &&
+    newEnemies.size === state.enemies.size &&
+    newGems.size === state.gems.size &&
+    newPickups.size === state.pickups.size
+  ) {
     return state
   }
   return {
@@ -376,6 +387,7 @@ export function applyCollisions(state: PlainGameState): PlainGameState {
     players: newPlayers,
     projectiles: newProjectiles,
     gems: newGems,
+    pickups: newPickups,
   }
 }
 
@@ -485,4 +497,56 @@ export function applyLevelUp(state: PlainGameState): PlainGameState {
 
   if (!changed) return state
   return { ...state, players: newPlayers }
+}
+
+export const PICKUP_COLLECT_RADIUS = 250_000 // 25 game units
+
+/**
+ * applyPickupCollection — checks player proximity to pickups and applies collection effects (GAME-17).
+ */
+export function applyPickupCollection(state: PlainGameState): PlainGameState {
+  if (state.pickups.size === 0 || state.players.size === 0) return state
+
+  const newPickups = new Map(state.pickups)
+  const newPlayers = new Map(state.players)
+  const newGems = new Map(state.gems)
+  const newEnemies = new Map(state.enemies)
+  let changed = false
+
+  const radiusSq = PICKUP_COLLECT_RADIUS * PICKUP_COLLECT_RADIUS
+
+  for (const [playerId, player] of state.players) {
+    const updatedPlayer = newPlayers.get(playerId) ?? { ...player }
+
+    for (const [pickupId, pickup] of newPickups) {
+      const distSq = toroidalDistSq(updatedPlayer.x, updatedPlayer.y, pickup.x, pickup.y)
+      if (distSq <= radiusSq) {
+        newPickups.delete(pickupId)
+
+        if (pickup.kind === 'health_orb') {
+          updatedPlayer.hp = Math.min(updatedPlayer.hp + 20, updatedPlayer.maxHp)
+          newPlayers.set(playerId, updatedPlayer)
+        } else if (pickup.kind === 'xp_magnet') {
+          for (const [gemId, gem] of newGems) {
+            newGems.set(gemId, { ...gem, x: updatedPlayer.x, y: updatedPlayer.y })
+          }
+        } else if (pickup.kind === 'screen_bomb') {
+          newEnemies.clear()
+        }
+
+        changed = true
+        break // one pickup per player per frame
+      }
+    }
+  }
+
+  if (!changed) return state
+
+  return {
+    ...state,
+    pickups: newPickups,
+    players: newPlayers,
+    gems: newGems,
+    enemies: newEnemies,
+  }
 }
