@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "tsc --build",
-    "dev": "tsx watch src/server.ts",
+    "dev": "tsx watch --env-file=.env src/server.ts",
     "start": "node dist/server.js",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -28,6 +28,7 @@
   "devDependencies": {
     "@types/bcryptjs": "2.4.6",
     "drizzle-kit": "0.31.10",
+    "tsx": "^4.22.4",
     "vitest": "4.1.8"
   }
 }
