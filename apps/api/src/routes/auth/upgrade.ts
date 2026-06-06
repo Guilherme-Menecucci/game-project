@@ -41,7 +41,9 @@ function isUniqueViolation(err: unknown): boolean {
   return false
 }
 
-// JWT payload shape from @fastify/jwt — declared via module augmentation
+// JWT payload shape from @fastify/jwt — declared via module augmentation.
+// Session tokens only — game tokens (plan 03-03) use a type cast in lib/auth.ts:signGameJwt
+// to avoid widening this union to a type that breaks isGuest narrowing in this file.
 declare module '@fastify/jwt' {
   interface FastifyJWT {
     payload: { userId: string; isGuest: boolean; role: string; displayName?: string }

@@ -1,0 +1,8 @@
+/* Bottom-center kill count — no backing panel, single text element */
+.text {
+  font-size: var(--text-label);
+  font-weight: 400;
+  color: var(--color-text-muted);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+  line-height: 1.4;
+}

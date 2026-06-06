@@ -1,0 +1,11 @@
+/* GamePage — full-viewport dark canvas container */
+.page {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background: #1e2030; /* arena ground color from UI-SPEC game canvas palette */
+  z-index: 0;
+  overflow: hidden;
+}

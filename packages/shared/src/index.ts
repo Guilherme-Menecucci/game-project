@@ -1,36 +1,19 @@
-// @game/shared — public API
-// Phase 3 will expand PlayerInputSchema with seq and tick fields.
-// Use z.object (not z.tuple) to allow adding fields without breaking the import contract.
-import * as z from 'zod'
+// @game/shared — public API barrel
+// All game schemas, types, and simulation exports.
 
-// Game input schemas (Phase 1)
-export const PlayerInputSchema = z.object({
-  moveVector: z.object({
-    x: z.number(),
-    y: z.number(),
-  }),
-  aimAngle: z.number(),
-  actionFlags: z.number().int(),
-})
+// ─── Schemas and input types ──────────────────────────────────────────────────
+export * from './schemas.js'
 
-export type PlayerInput = z.infer<typeof PlayerInputSchema>
+// ─── Phase 3 types and implementations ───────────────────────────────────────
 
-// Auth schemas (Phase 2)
-export const LoginSchema = z.object({
-  email: z.email(),
-  password: z.string().min(8),
-})
-export type Login = z.infer<typeof LoginSchema>
+// Real implementations (Task 1: 03-02)
+export * from './state.js'
+export * from './prng.js'
+export * from './spatialGrid.js'
 
-export const RegisterSchema = z.object({
-  email: z.email(),
-  password: z.string().min(8).max(72),
-})
-export type Register = z.infer<typeof RegisterSchema>
+// Real implementations (Task 2: 03-02)
+export * from './simulateTick.js'
+export * from './spawn.js'
 
-export const GuestTokenResponseSchema = z.object({
-  userId: z.uuid(),
-  isGuest: z.literal(true),
-  displayName: z.string(),
-})
-export type GuestTokenResponse = z.infer<typeof GuestTokenResponseSchema>
+// Real implementations (Task 1: 03-06)
+export * from './weapons.js'

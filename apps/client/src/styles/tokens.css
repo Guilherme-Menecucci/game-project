@@ -30,6 +30,17 @@
   --font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
+/* ─── Phase 3 game-specific tokens ─── */
+:root {
+  --color-hp-fill: #22c55e;                    /* HP bar fill — HP > 50% */
+  --color-hp-mid: #eab308;                     /* HP bar fill — HP 25–50% */
+  /* HP < 25%: reuse --color-destructive (#e05252) — no new token needed */
+  --color-hp-track: #2a2c38;                   /* HP bar track (same as --color-border) */
+  --color-xp-fill: #6c63ff;                    /* XP bar fill (same as --color-accent) */
+  --color-xp-track: #2a2c38;                   /* XP bar track (same as --color-border) */
+  --color-hud-backing: rgba(14, 15, 20, 0.75); /* Semi-opaque HUD cluster backing */
+}
+
 body {
   margin: 0;
   background: var(--color-bg);

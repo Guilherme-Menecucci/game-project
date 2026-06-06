@@ -25,3 +25,25 @@ export function signRegisteredJwt(app: FastifyInstance, userId: string): string 
 export function signGuestJwt(app: FastifyInstance, userId: string, displayName: string): string {
   return app.jwt.sign({ userId, role: 'guest', isGuest: true, displayName }, { expiresIn: '1d' })
 }
+
+/**
+ * Sign a short-lived game JWT for Colyseus room authentication (D-05).
+ * Payload: { userId, type: 'game' }. Expiry: 5 minutes — single-session scope.
+ *
+ * Token exchange flow:
+ *   1. Client calls GET /auth/game-token with session cookie → receives this token.
+ *   2. Client passes token as client.auth.token to Colyseus room join.
+ *   3. Colyseus Room validates token in static onAuth hook (plan 03-04).
+ *
+ * Payload is intentionally minimal: no role, no isGuest, no displayName.
+ * The 'type' field lets the Colyseus onAuth hook reject session tokens passed directly
+ * (T-3-03 elevation-of-privilege mitigate).
+ */
+export function signGameJwt(app: FastifyInstance, userId: string): string {
+  // Type cast required: FastifyJWT.payload is constrained to session token shape
+  // (defined in upgrade.ts module augmentation). The game token payload intentionally
+  // omits session fields (isGuest, role) — cast bypasses the interface constraint
+  // without widening it to a union that would break isGuest narrowing in upgrade.ts.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return app.jwt.sign({ userId, type: 'game' } as any, { expiresIn: '5m' })
+}
