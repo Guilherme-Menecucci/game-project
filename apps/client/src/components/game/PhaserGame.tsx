@@ -1,6 +1,8 @@
 import Phaser from 'phaser'
 import { useEffect, useRef } from 'react'
 import type { Room } from '@colyseus/sdk'
+import { BootScene } from '../../scenes/BootScene.js'
+import { GameScene } from '../../scenes/GameScene.js'
 import styles from './PhaserGame.module.css'
 
 interface PhaserGameProps {
@@ -25,14 +27,22 @@ export function PhaserGame({ room, onGameOver }: PhaserGameProps) {
       height: window.innerHeight,
       backgroundColor: '#1e2030', // arena ground color — UI-SPEC Game Canvas Palette
       parent: container,
-      scene: [], // GameScene added in plan 03-08
+      // BootScene creates the DynamicTexture atlas then starts GameScene.
+      // GameScene renders Colyseus state, captures input, and emits 'gameover'.
+      scene: [BootScene, GameScene],
     }
 
     const game = new Phaser.Game(config)
 
-    // Wire game-over signal from room (plan 03-08 will attach scene; shell uses onLeave)
-    _room.onLeave(() => {
+    // Pass room reference via registry so BootScene can read it in create().
+    // BootScene forwards it to GameScene via scene.start('GameScene', { room }).
+    game.registry.set('room', _room)
+    game.registry.set('killCount', 0)
+
+    // Listen for game-over event emitted by GameScene when player hp <= 0 or room leaves.
+    game.events.on('gameover', (data: { killCount: number }) => {
       _onGameOver()
+      void data // killCount available for plan 03-08 GameOverScreen
     })
 
     // CRITICAL: game.destroy(true) removes the canvas from the DOM.
