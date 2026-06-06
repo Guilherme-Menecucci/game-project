@@ -1,0 +1,112 @@
+/* SoloRunStartScreen — centered start card, z-index 50 above Phaser canvas (UI-SPEC §HUD Layout) */
+.screen {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-bg);
+  padding: var(--space-2xl) var(--space-md);
+}
+
+.card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: var(--space-lg);
+  width: 100%;
+  max-width: 360px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.heading {
+  font-size: var(--text-heading);
+  font-weight: 600;
+  color: var(--color-text);
+  margin: 0;
+  line-height: 1.2;
+}
+
+.subCopy {
+  font-size: var(--text-body);
+  color: var(--color-text-muted);
+  margin: 0;
+  line-height: 1.5;
+}
+
+.userLabel {
+  font-size: var(--text-label);
+  color: var(--color-text-muted);
+  margin: 0;
+}
+
+.userName {
+  color: var(--color-text);
+}
+
+/* Error banner */
+.errorBanner {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  padding: var(--space-sm);
+  background: rgba(224, 82, 82, 0.1);
+  border: 1px solid var(--color-error);
+  border-radius: 4px;
+}
+
+.errorText {
+  font-size: var(--text-label);
+  color: var(--color-error);
+  margin: 0;
+}
+
+.errorActionBtn {
+  align-self: flex-start;
+  background: transparent;
+  border: 1px solid var(--color-error);
+  border-radius: 4px;
+  color: var(--color-error);
+  font-size: var(--text-label);
+  padding: var(--space-xs) var(--space-sm);
+  cursor: pointer;
+  min-height: 32px;
+}
+
+.errorActionBtn:hover {
+  background: rgba(224, 82, 82, 0.15);
+}
+
+/* Primary CTA button */
+.soloRunBtn {
+  width: 100%;
+  background: var(--color-accent);
+  color: var(--color-text);
+  border: none;
+  border-radius: 4px;
+  font-size: var(--text-body);
+  font-weight: 600;
+  min-height: 44px;
+  cursor: pointer;
+  margin-top: var(--space-sm);
+  transition: background 150ms ease;
+}
+
+.soloRunBtn:hover:not(:disabled) {
+  background: var(--color-accent-hover);
+}
+
+.soloRunBtn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Logout link sits below the CTA */
+.logoutWrapper {
+  margin-top: var(--space-xs);
+  display: flex;
+  justify-content: center;
+}
