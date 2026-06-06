@@ -4,6 +4,14 @@
 # Project instructions — kept local, not tracked in public repo
 CLAUDE.md
 .claude/
+.agent/
+.gemini/
+.vscode/
+.idea/
+.obsidian/
+
+.github/
+!.github/workflows/
 
 # Dependencies
 node_modules/
