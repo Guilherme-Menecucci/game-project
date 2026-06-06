@@ -13,6 +13,7 @@
     "@colyseus/schema": "4.0.26",
     "@colyseus/tools": "0.17.19",
     "@colyseus/ws-transport": "0.17.13",
+    "express": "4.21.2",
     "jsonwebtoken": "9.0.2",
     "zod": "4.4.3",
     "@game/shared": "workspace:*"
