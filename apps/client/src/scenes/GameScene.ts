@@ -1,43 +1,29 @@
 /**
  * GameScene — Phaser rendering loop driven by Colyseus state deltas.
  *
- * Receives room from scene data (passed by BootScene after registry lookup).
- * Uses @colyseus/schema 4.x Callbacks.get(room) API for state listeners.
- * (room.state.*.onAdd is the @colyseus/schema 2.x API — removed in 4.x)
+ * Uses room.onStateChange (20Hz) to reconcile sprites with server state.
+ * This matches the HUD pattern and avoids Callbacks.get() timing issues
+ * (onAdd does not fire for entities already present when the callback is registered).
  *
  * Coordinate conversion (D-06):
  *   Server stores sub-unit integers (e.g. 2,048,000 for world center).
- *   Phaser expects game units. toGU(x) = x / 1000.
- *   Without this, all entities render at positions 1000x off-screen.
+ *   toGU(x) = x / 1000.
  *
  * Input (D-02):
- *   WASD + arrow keys captured. Normalized moveVector sent at 20Hz (INPUT_INTERVAL=50ms).
- *   aimAngle=0 (Phase 3 — auto-aim handled server-side). actionFlags=0.
- *   Monotonically incrementing sendSeq per D-02 anti-replay.
- *
- * Game-over detection:
- *   When local player hp <= 0 OR room.onLeave fires, emit 'gameover' on game.events.
- *   PhaserGame.tsx listens for this and calls the React onGameOver callback.
- *
- * GAME-05 — Enemy projectile rendering:
- *   Projectile sprites branch on isEnemy: proj_enemy frame for ranged enemy projectiles,
- *   proj_player frame for auto-fired player projectiles.
+ *   WASD + arrow keys. Normalized moveVector sent at 20Hz (INPUT_INTERVAL=50ms).
+ *   aimAngle=0 (Phase 3 auto-aim). actionFlags=0.
  */
 import Phaser from 'phaser'
-import { Callbacks } from '@colyseus/sdk'
 import type { Room } from '@colyseus/sdk'
 
-/** Convert sub-units to game units (Phaser pixel space). D-06 */
 const toGU = (subUnits: number): number => subUnits / 1000
 
 export class GameScene extends Phaser.Scene {
-  /** 50ms = 20Hz input send rate (D-02) */
   private readonly INPUT_INTERVAL = 50
 
   private room!: Room
   private localPlayerId!: string
 
-  /** Sprite maps keyed by entity id */
   private playerSprites = new Map<string, Phaser.GameObjects.Sprite>()
   private enemySprites = new Map<string, Phaser.GameObjects.Sprite>()
   private gemSprites = new Map<string, Phaser.GameObjects.Sprite>()
@@ -51,10 +37,11 @@ export class GameScene extends Phaser.Scene {
     right: Phaser.Input.Keyboard.Key
   }
 
-  /** Accumulated ms since last input dispatch */
   private inputTimer = 0
-  /** Monotonically incrementing sequence number for input messages (D-02) */
   private sendSeq = 0
+  private gameOverEmitted = false
+  /** Track previous enemy keys to count kills via state diff */
+  private prevEnemyKeys = new Set<string>()
 
   constructor() {
     super({ key: 'GameScene' })
@@ -64,15 +51,12 @@ export class GameScene extends Phaser.Scene {
     this.room = data.room
     this.localPlayerId = this.room.sessionId
 
-    // World size: 4096 x 4096 game units (4,096,000 sub-units / 1000)
     this.physics.world.setBounds(0, 0, 4096, 4096)
     this.cameras.main.setBounds(0, 0, 4096, 4096)
     this.cameras.main.setBackgroundColor('#1e2030')
 
-    // Initialise kill counter in registry (PhaserGame.tsx also sets this to 0 after creation)
     this.game.registry.set('killCount', 0)
 
-    // Keyboard input setup
     this.cursors = this.input.keyboard!.createCursorKeys()
     this.wasd = {
       up: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.W),
@@ -81,153 +65,147 @@ export class GameScene extends Phaser.Scene {
       right: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.D),
     }
 
-    // -------------------------------------------------------------------
-    // Register Colyseus state callbacks using @colyseus/schema 4.x API.
-    //
-    // Callbacks.get() returns a StateCallbackStrategy. The state type flows
-    // from the Room generic. Room from @colyseus/sdk is Room<any> at the call
-    // site (GamePage joinOrCreate returns untyped Room), so we use 'as any'
-    // to unlock the typed callback methods without explicit schema imports.
-    //
+    // Use onStateChange for all rendering — fires immediately with current state
+    // and on every subsequent server tick (20Hz). Avoids Callbacks.onAdd timing
+    // issues where the player is already in state before the callback is registered.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const cb = Callbacks.get(this.room as any) as any
-
-    // --- Players ---
-    cb.onAdd(
-      'players',
-      (player: { x: number; y: number; hp: number; level: number; xp: number }, key: string) => {
-        const sprite = this.add.sprite(toGU(player.x), toGU(player.y), 'entities', 'player')
-        sprite.setDepth(2)
-        this.playerSprites.set(key, sprite)
-
-        // Camera follows the local player
-        if (key === this.localPlayerId) {
-          this.cameras.main.startFollow(sprite, true, 0.1, 0.1)
-        }
-
-        // Game-over when local player hp drops to 0
-        cb.listen(player, 'hp', (hp: number) => {
-          if (key === this.localPlayerId && hp <= 0) {
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const state = this.room.state as any
-            this.game.events.emit('gameover', {
-              killCount: this.game.registry.get('killCount') ?? 0,
-              elapsedMs: (state?.elapsedMs as number) ?? 0,
-              level: player.level,
-              xp: player.xp,
-            })
-          }
-        })
-      }
-    )
-
-    cb.onChange('players', (key: string, player: { x: number; y: number }) => {
-      const sprite = this.playerSprites.get(key)
-      if (sprite) {
-        sprite.setPosition(toGU(player.x), toGU(player.y))
-      }
+    this.room.onStateChange((state: any) => {
+      this.syncState(state)
     })
 
-    cb.onRemove('players', (_player: unknown, key: string) => {
-      const sprite = this.playerSprites.get(key)
-      if (sprite) {
-        sprite.destroy()
-        this.playerSprites.delete(key)
-      }
-    })
-
-    // --- Enemies ---
-    cb.onAdd('enemies', (enemy: { x: number; y: number; archetype: string }, key: string) => {
-      // Frame name matches archetype string: 'swarmer' | 'tank' | 'ranged' (matches atlas frames)
-      const sprite = this.add.sprite(toGU(enemy.x), toGU(enemy.y), 'entities', enemy.archetype)
-      sprite.setDepth(1)
-      this.enemySprites.set(key, sprite)
-    })
-
-    cb.onChange('enemies', (key: string, enemy: { x: number; y: number }) => {
-      const sprite = this.enemySprites.get(key)
-      if (sprite) {
-        sprite.setPosition(toGU(enemy.x), toGU(enemy.y))
-      }
-    })
-
-    cb.onRemove('enemies', (_enemy: unknown, key: string) => {
-      const sprite = this.enemySprites.get(key)
-      if (sprite) {
-        sprite.destroy()
-        this.enemySprites.delete(key)
-        // Increment kill counter
-        const kills = (this.game.registry.get('killCount') as number) ?? 0
-        this.game.registry.set('killCount', kills + 1)
-      }
-    })
-
-    // --- Gems ---
-    cb.onAdd('gems', (gem: { x: number; y: number }, key: string) => {
-      const sprite = this.add.sprite(toGU(gem.x), toGU(gem.y), 'entities', 'gem')
-      sprite.setDepth(0)
-      this.gemSprites.set(key, sprite)
-    })
-
-    cb.onChange('gems', (key: string, gem: { x: number; y: number }) => {
-      const sprite = this.gemSprites.get(key)
-      if (sprite) {
-        sprite.setPosition(toGU(gem.x), toGU(gem.y))
-      }
-    })
-
-    cb.onRemove('gems', (_gem: unknown, key: string) => {
-      const sprite = this.gemSprites.get(key)
-      if (sprite) {
-        sprite.destroy()
-        this.gemSprites.delete(key)
-      }
-    })
-
-    // --- Projectiles (GAME-05) ---
-    cb.onAdd(
-      'projectiles',
-      (projectile: { x: number; y: number; isEnemy: boolean }, key: string) => {
-        // Branch on isEnemy: enemy projectiles render orange-red, player projectiles render white
-        const frame = projectile.isEnemy ? 'proj_enemy' : 'proj_player'
-        const sprite = this.add.sprite(toGU(projectile.x), toGU(projectile.y), 'entities', frame)
-        sprite.setDepth(3)
-        this.projectileSprites.set(key, sprite)
-      }
-    )
-
-    cb.onChange('projectiles', (key: string, projectile: { x: number; y: number }) => {
-      const sprite = this.projectileSprites.get(key)
-      if (sprite) {
-        sprite.setPosition(toGU(projectile.x), toGU(projectile.y))
-      }
-    })
-
-    cb.onRemove('projectiles', (_projectile: unknown, key: string) => {
-      const sprite = this.projectileSprites.get(key)
-      if (sprite) {
-        sprite.destroy()
-        this.projectileSprites.delete(key)
-      }
-    })
-
-    // Game-over when room disconnects (server shutdown, player kicked, etc.)
+    // Room disconnect = game over (server shutdown, player kicked, etc.)
     this.room.onLeave(() => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const state = this.room.state as any
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const myPlayer = (state?.players as Map<string, any>)?.get(this.localPlayerId)
-      this.game.events.emit('gameover', {
-        killCount: this.game.registry.get('killCount') ?? 0,
-        elapsedMs: (state?.elapsedMs as number) ?? 0,
-        level: (myPlayer?.level as number) ?? 1,
-        xp: (myPlayer?.xp as number) ?? 0,
-      })
+      if (!this.gameOverEmitted) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const state = this.room.state as any
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const myPlayer = (state?.players as Map<string, any>)?.get(this.localPlayerId)
+        this.emitGameOver(myPlayer)
+      }
     })
   }
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private syncState(state: any): void {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const players = state.players as Map<string, any>
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const enemies = state.enemies as Map<string, any>
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const gems = state.gems as Map<string, any>
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const projectiles = state.projectiles as Map<string, any>
+
+    // --- Players ---
+    for (const [key, player] of players) {
+      if (!this.playerSprites.has(key)) {
+        const sprite = this.add.sprite(toGU(player.x), toGU(player.y), 'entities', 'player')
+        sprite.setDepth(2)
+        this.playerSprites.set(key, sprite)
+        if (key === this.localPlayerId) {
+          this.cameras.main.startFollow(sprite, true, 0.1, 0.1)
+        }
+      } else {
+        const sprite = this.playerSprites.get(key)!
+        sprite.setPosition(toGU(player.x), toGU(player.y))
+      }
+
+      // Game-over: local player HP reaches 0
+      if (key === this.localPlayerId && player.hp <= 0 && !this.gameOverEmitted) {
+        this.emitGameOver(player)
+      }
+    }
+    // Remove sprites for players who left
+    for (const key of this.playerSprites.keys()) {
+      if (!players.has(key)) {
+        this.playerSprites.get(key)!.destroy()
+        this.playerSprites.delete(key)
+      }
+    }
+
+    // --- Enemies ---
+    const currentEnemyKeys = new Set(enemies.keys())
+    // Count kills: enemies present last tick but gone now
+    let newKills = 0
+    for (const key of this.prevEnemyKeys) {
+      if (!currentEnemyKeys.has(key)) newKills++
+    }
+    if (newKills > 0) {
+      const prev = (this.game.registry.get('killCount') as number) ?? 0
+      this.game.registry.set('killCount', prev + newKills)
+    }
+    this.prevEnemyKeys = currentEnemyKeys
+
+    for (const [key, enemy] of enemies) {
+      if (!this.enemySprites.has(key)) {
+        const frame = (enemy.archetype as string) ?? 'swarmer'
+        const sprite = this.add.sprite(toGU(enemy.x), toGU(enemy.y), 'entities', frame)
+        sprite.setDepth(1)
+        this.enemySprites.set(key, sprite)
+      } else {
+        const sprite = this.enemySprites.get(key)!
+        sprite.setPosition(toGU(enemy.x), toGU(enemy.y))
+      }
+    }
+    for (const key of this.enemySprites.keys()) {
+      if (!enemies.has(key)) {
+        this.enemySprites.get(key)!.destroy()
+        this.enemySprites.delete(key)
+      }
+    }
+
+    // --- Gems ---
+    for (const [key, gem] of gems) {
+      if (!this.gemSprites.has(key)) {
+        const sprite = this.add.sprite(toGU(gem.x), toGU(gem.y), 'entities', 'gem')
+        sprite.setDepth(0)
+        this.gemSprites.set(key, sprite)
+      } else {
+        this.gemSprites.get(key)!.setPosition(toGU(gem.x), toGU(gem.y))
+      }
+    }
+    for (const key of this.gemSprites.keys()) {
+      if (!gems.has(key)) {
+        this.gemSprites.get(key)!.destroy()
+        this.gemSprites.delete(key)
+      }
+    }
+
+    // --- Projectiles ---
+    for (const [key, proj] of projectiles) {
+      if (!this.projectileSprites.has(key)) {
+        const frame = (proj.isEnemy as boolean) ? 'proj_enemy' : 'proj_player'
+        const sprite = this.add.sprite(toGU(proj.x), toGU(proj.y), 'entities', frame)
+        sprite.setDepth(3)
+        this.projectileSprites.set(key, sprite)
+      } else {
+        this.projectileSprites.get(key)!.setPosition(toGU(proj.x), toGU(proj.y))
+      }
+    }
+    for (const key of this.projectileSprites.keys()) {
+      if (!projectiles.has(key)) {
+        this.projectileSprites.get(key)!.destroy()
+        this.projectileSprites.delete(key)
+      }
+    }
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private emitGameOver(player: any): void {
+    this.gameOverEmitted = true
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const state = this.room.state as any
+    this.game.events.emit('gameover', {
+      killCount: (this.game.registry.get('killCount') as number) ?? 0,
+      elapsedMs: (state?.elapsedMs as number) ?? 0,
+      level: (player?.level as number) ?? 1,
+      xp: (player?.xp as number) ?? 0,
+    })
+    // Leave room so server stops ticking this client's player
+    void this.room.leave()
+  }
+
   update(_time: number, delta: number): void {
-    // --- Capture keyboard input and compute normalized move vector ---
     let mx = 0
     let my = 0
 
@@ -236,18 +214,16 @@ export class GameScene extends Phaser.Scene {
     if (this.cursors.up.isDown || this.wasd.up.isDown) my -= 1
     if (this.cursors.down.isDown || this.wasd.down.isDown) my += 1
 
-    // Normalize diagonal movement to unit vector magnitude
     if (mx !== 0 && my !== 0) {
       mx *= 0.7071
       my *= 0.7071
     }
 
-    // --- Accumulate time and send input at 20Hz (INPUT_INTERVAL = 50ms) ---
     this.inputTimer += delta
     if (this.inputTimer >= this.INPUT_INTERVAL) {
       this.room.send('input', {
         moveVector: { x: mx, y: my },
-        aimAngle: 0, // Phase 3: auto-aim handled server-side
+        aimAngle: 0,
         actionFlags: 0,
         seq: this.sendSeq++,
         tick: 0,
