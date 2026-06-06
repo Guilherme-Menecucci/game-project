@@ -5,9 +5,16 @@ import { BootScene } from '../../scenes/BootScene.js'
 import { GameScene } from '../../scenes/GameScene.js'
 import styles from './PhaserGame.module.css'
 
+export interface GameOverData {
+  killCount: number
+  elapsedMs: number
+  level: number
+  xp: number
+}
+
 interface PhaserGameProps {
   room: Room
-  onGameOver: () => void
+  onGameOver: (data: GameOverData) => void
 }
 
 export function PhaserGame({ room, onGameOver }: PhaserGameProps) {
@@ -40,9 +47,8 @@ export function PhaserGame({ room, onGameOver }: PhaserGameProps) {
     game.registry.set('killCount', 0)
 
     // Listen for game-over event emitted by GameScene when player hp <= 0 or room leaves.
-    game.events.on('gameover', (data: { killCount: number }) => {
-      _onGameOver()
-      void data // killCount available for plan 03-08 GameOverScreen
+    game.events.on('gameover', (data: GameOverData) => {
+      _onGameOver(data)
     })
 
     // CRITICAL: game.destroy(true) removes the canvas from the DOM.

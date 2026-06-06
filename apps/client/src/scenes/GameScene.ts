@@ -93,25 +93,33 @@ export class GameScene extends Phaser.Scene {
     const cb = Callbacks.get(this.room as any) as any
 
     // --- Players ---
-    cb.onAdd('players', (player: { x: number; y: number; hp: number }, key: string) => {
-      const sprite = this.add.sprite(toGU(player.x), toGU(player.y), 'entities', 'player')
-      sprite.setDepth(2)
-      this.playerSprites.set(key, sprite)
+    cb.onAdd(
+      'players',
+      (player: { x: number; y: number; hp: number; level: number; xp: number }, key: string) => {
+        const sprite = this.add.sprite(toGU(player.x), toGU(player.y), 'entities', 'player')
+        sprite.setDepth(2)
+        this.playerSprites.set(key, sprite)
 
-      // Camera follows the local player
-      if (key === this.localPlayerId) {
-        this.cameras.main.startFollow(sprite, true, 0.1, 0.1)
-      }
-
-      // Game-over when local player hp drops to 0
-      cb.listen(player, 'hp', (hp: number) => {
-        if (key === this.localPlayerId && hp <= 0) {
-          this.game.events.emit('gameover', {
-            killCount: this.game.registry.get('killCount') ?? 0,
-          })
+        // Camera follows the local player
+        if (key === this.localPlayerId) {
+          this.cameras.main.startFollow(sprite, true, 0.1, 0.1)
         }
-      })
-    })
+
+        // Game-over when local player hp drops to 0
+        cb.listen(player, 'hp', (hp: number) => {
+          if (key === this.localPlayerId && hp <= 0) {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const state = this.room.state as any
+            this.game.events.emit('gameover', {
+              killCount: this.game.registry.get('killCount') ?? 0,
+              elapsedMs: (state?.elapsedMs as number) ?? 0,
+              level: player.level,
+              xp: player.xp,
+            })
+          }
+        })
+      }
+    )
 
     cb.onChange('players', (key: string, player: { x: number; y: number }) => {
       const sprite = this.playerSprites.get(key)
@@ -205,8 +213,15 @@ export class GameScene extends Phaser.Scene {
 
     // Game-over when room disconnects (server shutdown, player kicked, etc.)
     this.room.onLeave(() => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const state = this.room.state as any
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const myPlayer = (state?.players as Map<string, any>)?.get(this.localPlayerId)
       this.game.events.emit('gameover', {
         killCount: this.game.registry.get('killCount') ?? 0,
+        elapsedMs: (state?.elapsedMs as number) ?? 0,
+        level: (myPlayer?.level as number) ?? 1,
+        xp: (myPlayer?.xp as number) ?? 0,
       })
     })
   }
