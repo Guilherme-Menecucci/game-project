@@ -2,10 +2,11 @@
  * SoloRoom anti-cheat validation tests (SC-4, TEST-05)
  *
  * Verifies:
- * 1. Room rejects messages with unknown types (state not mutated beyond normal tick)
+ * 1. Room rejects messages with unknown types — state (players/hp/xp) unchanged
  * 2. Room rejects input with invalid schema (missing required fields)
  * 3. Room accepts valid input and advances game state
  * 4. Client cannot directly mutate server state (Colyseus Schema is server-only)
+ * 5. onAuth rejects missing/invalid game JWT (T-3-03)
  *
  * GREEN phase (plan 03-04): appConfig and SoloRoom implemented.
  * onAuth requires a valid game JWT — tests sign a token with the test JWT_SECRET.
@@ -52,24 +53,22 @@ describe('SoloRoom anti-cheat validation (SC-4, TEST-05)', () => {
     await server.cleanup()
   })
 
-  it('rejects message with unknown type — state unchanged', async () => {
+  it('rejects message with unknown type — player state unchanged', async () => {
     const room = await server.createRoom('solo_room', {})
 
     // Set auth token so onAuth accepts the connection
     server.sdk.auth.token = signTestGameToken()
     const client = await server.connectTo(room)
 
-    // Snapshot state before the hack attempt
-    const tickBefore = room.state.tick as number
+    // Snapshot players state before the hack attempt (id, x, y, hp, level unchanged)
+    const playersBefore = JSON.stringify(room.state.players)
 
-    // Send a fabricated message type that doesn't exist
+    // Send a fabricated message type with cheated values — server ignores unknown types
     client.send('hack_state', { x: 999999, hp: 999, level: 99 })
     await room.waitForNextSimulationTick()
 
-    // State must have advanced (game loop ticks normally regardless of unknown messages)
-    // Using greaterThanOrEqual because timing of waitForNextSimulationTick vs interval
-    // fire order is non-deterministic within a single 50ms window.
-    expect(room.state.tick as number).toBeGreaterThanOrEqual(tickBefore)
+    // Player state (hp, level, etc.) must be unchanged — hack was silently dropped
+    expect(JSON.stringify(room.state.players)).toBe(playersBefore)
     await client.leave()
   })
 
@@ -96,7 +95,8 @@ describe('SoloRoom anti-cheat validation (SC-4, TEST-05)', () => {
     server.sdk.auth.token = signTestGameToken()
     const client = await server.connectTo(room)
 
-    expect(room.state.tick as number).toBe(0)
+    // Capture current tick (not hardcoded 0 — simulation may have run during connectTo)
+    const tickBefore = room.state.tick as number
 
     // Send a valid input matching PlayerInputSchema
     const validInput: PlayerInput = {
@@ -109,8 +109,8 @@ describe('SoloRoom anti-cheat validation (SC-4, TEST-05)', () => {
     client.send('input', validInput)
     await room.waitForNextSimulationTick()
 
-    // Game state should have advanced at least one tick
-    expect(room.state.tick as number).toBeGreaterThan(0)
+    // Game state should have advanced at least one tick beyond what we captured
+    expect(room.state.tick as number).toBeGreaterThan(tickBefore)
     await client.leave()
   })
 
@@ -123,7 +123,6 @@ describe('SoloRoom anti-cheat validation (SC-4, TEST-05)', () => {
     // The room's server-side GameStateSchema is owned by the server.
     // Client-side references are read-only patches sent from server → client.
     // Verify: the server state players map is defined and protected from client writes.
-    // (Colyseus Schema mutation on the server side is only allowed within room methods.)
     await room.waitForNextSimulationTick()
     expect(room.state.players).toBeDefined()
 
@@ -131,5 +130,33 @@ describe('SoloRoom anti-cheat validation (SC-4, TEST-05)', () => {
     // (the client can only call client.send() — it cannot reach into server state directly)
     expect(room.state.players.has(client.sessionId)).toBe(true)
     await client.leave()
+  })
+
+  it('onAuth rejects connection when game JWT is missing (T-3-03)', async () => {
+    const room = await server.createRoom('solo_room', {})
+
+    // Explicitly clear the auth token (previous test may have set it)
+    // onAuth will throw 'Missing game token' → Colyseus rejects the connection
+    server.sdk.auth.token = ''
+    const connectPromise = server.connectTo(room)
+
+    await expect(connectPromise).rejects.toThrow()
+  })
+
+  it('onAuth rejects connection when game JWT is signed with wrong secret (T-3-03)', async () => {
+    const room = await server.createRoom('solo_room', {})
+
+    // Sign with a different secret — verifyGameToken will throw JsonWebTokenError
+    server.sdk.auth.token = jwt.sign(
+      { userId: 'attacker', type: 'game' },
+      'wrong-secret-that-is-32-characters-long',
+      {
+        expiresIn: '5m',
+      }
+    )
+
+    const connectPromise = server.connectTo(room)
+
+    await expect(connectPromise).rejects.toThrow()
   })
 })
