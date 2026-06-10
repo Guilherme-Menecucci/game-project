@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useRef, useState, useCallback } from 'react'
 import type { Room } from '@colyseus/sdk'
 import { Client } from '@colyseus/sdk'
 import { useAuth } from '../components/auth/AuthProvider.js'
@@ -40,9 +40,14 @@ export function GamePage() {
     xp: 0,
   })
 
+  const [weapons, setWeapons] = useState<string[]>([])
+  const [passives, setPassives] = useState<string[]>([])
+
   async function handleSoloRun() {
     setPhase('CONNECTING')
     setError(null)
+    setWeapons([])
+    setPassives([])
 
     // Step 1: Fetch game token (session cookie required — D-05)
     let token: string
@@ -74,6 +79,21 @@ export function GamePage() {
       const room = await client.joinOrCreate<unknown>('solo_room', { token })
       roomRef.current = room as Room
 
+      // Track weapons and passives
+      room.onStateChange(
+        (state: { players?: Map<string, { weapons?: string[]; passives?: string[] }> }) => {
+          const myPlayer = state.players?.get(room.sessionId)
+          if (myPlayer) {
+            if (myPlayer.weapons) {
+              setWeapons(Array.from(myPlayer.weapons))
+            }
+            if (myPlayer.passives) {
+              setPassives(Array.from(myPlayer.passives))
+            }
+          }
+        }
+      )
+
       // Add progression listeners
       room.onMessage('levelup', (data: { options: UpgradeOption[] }) => {
         setPendingChoices(data.options)
@@ -88,6 +108,12 @@ export function GamePage() {
       room.onMessage('rare_event', (data: { options: UpgradeOption[] }) => {
         setPendingChoices(data.options)
         setPhase('UPGRADING')
+      })
+
+      room.onMessage('upgrade_applied', () => {
+        setPhase('ACTIVE')
+        setPendingChoices([])
+        setSlotFullPayload(null)
       })
 
       setPhase('ACTIVE')
@@ -109,31 +135,34 @@ export function GamePage() {
     }
   }
 
-  function handleUpgradeSelect(upgradeId: string) {
+  const handleUpgradeSelect = useCallback((upgradeId: string) => {
     roomRef.current?.send('upgrade_selected', { upgradeId })
     setPhase('ACTIVE')
     setPendingChoices([])
-  }
+  }, [])
 
-  function handleReplace(slot: number) {
-    if (slotFullPayload) {
-      roomRef.current?.send('replace_slot', { slot, upgradeId: slotFullPayload.upgradeId })
-      setPhase('ACTIVE')
-      setSlotFullPayload(null)
-    }
-  }
+  const handleReplace = useCallback(
+    (slot: number) => {
+      if (slotFullPayload) {
+        roomRef.current?.send('replace_slot', { slot, upgradeId: slotFullPayload.upgradeId })
+        setPhase('ACTIVE')
+        setSlotFullPayload(null)
+      }
+    },
+    [slotFullPayload]
+  )
 
-  function handleGameOver(data: GameOverData) {
+  const handleGameOver = useCallback((data: GameOverData) => {
     // ACTIVE → GAME-OVER: capture final stats, show GameOverScreen
     setFinalStats(data)
     setPhase('GAME-OVER')
-  }
+  }, [])
 
-  function handleRetry() {
+  const handleRetry = useCallback(() => {
     // GAME-OVER → IDLE: deliberate pause — player must click "Solo Run" again
     // This is a deliberate pause point giving breathing room before the next run.
     setPhase('IDLE')
-  }
+  }, [])
 
   return (
     <div className={styles.page}>
@@ -153,7 +182,12 @@ export function GamePage() {
           </>
         )}
       {phase === 'UPGRADING' && (
-        <UpgradePicker options={pendingChoices} onSelect={handleUpgradeSelect} />
+        <UpgradePicker
+          options={pendingChoices}
+          onSelect={handleUpgradeSelect}
+          weapons={weapons}
+          passives={passives}
+        />
       )}
       {phase === 'SLOT_FULL' && slotFullPayload && (
         <SlotFullModal
@@ -169,6 +203,8 @@ export function GamePage() {
             kills: finalStats.killCount,
             level: finalStats.level,
             xp: finalStats.xp,
+            weapons: weapons,
+            passives: passives,
           }}
           onRetry={handleRetry}
         />

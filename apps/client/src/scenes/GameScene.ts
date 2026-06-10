@@ -29,6 +29,7 @@ export class GameScene extends Phaser.Scene {
   private gemSprites = new Map<string, Phaser.GameObjects.Sprite>()
   private projectileSprites = new Map<string, Phaser.GameObjects.Sprite>()
   private pickupsGraphics!: Phaser.GameObjects.Graphics
+  private auraGraphics!: Phaser.GameObjects.Graphics
 
   private cursors!: Phaser.Types.Input.Keyboard.CursorKeys
   private wasd!: {
@@ -43,6 +44,13 @@ export class GameScene extends Phaser.Scene {
   private gameOverEmitted = false
   /** Track previous enemy keys to count kills via state diff */
   private prevEnemyKeys = new Set<string>()
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private stateCallback?: (state: any) => void
+
+  private lastWeapons: string[] = []
+  private lastPassives: string[] = []
+  private lastLevel = 1
+  private lastXp = 0
 
   constructor() {
     super({ key: 'GameScene' })
@@ -60,6 +68,9 @@ export class GameScene extends Phaser.Scene {
     this.pickupsGraphics = this.add.graphics()
     this.pickupsGraphics.setDepth(0.5)
 
+    this.auraGraphics = this.add.graphics()
+    this.auraGraphics.setDepth(1.5)
+
     this.cursors = this.input.keyboard!.createCursorKeys()
     this.wasd = {
       up: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.W),
@@ -72,8 +83,16 @@ export class GameScene extends Phaser.Scene {
     // and on every subsequent server tick (20Hz). Avoids Callbacks.onAdd timing
     // issues where the player is already in state before the callback is registered.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    this.room.onStateChange((state: any) => {
+    this.stateCallback = (state: any) => {
       this.syncState(state)
+    }
+    this.room.onStateChange(this.stateCallback)
+
+    this.events.once('shutdown', () => {
+      if (this.stateCallback) {
+        this.room.onStateChange.remove(this.stateCallback)
+        this.stateCallback = undefined
+      }
     })
 
     // Room disconnect = game over (server shutdown, player kicked, etc.)
@@ -99,8 +118,21 @@ export class GameScene extends Phaser.Scene {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const projectiles = state.projectiles as Map<string, any>
 
+    this.auraGraphics.clear()
+
     // --- Players ---
     for (const [key, player] of players) {
+      if (key === this.localPlayerId) {
+        if (player.weapons) {
+          this.lastWeapons = Array.from(player.weapons)
+        }
+        if (player.passives) {
+          this.lastPassives = Array.from(player.passives)
+        }
+        this.lastLevel = player.level ?? 1
+        this.lastXp = player.xp ?? 0
+      }
+
       if (!this.playerSprites.has(key)) {
         const sprite = this.add.sprite(toGU(player.x), toGU(player.y), 'entities', 'player')
         sprite.setDepth(2)
@@ -111,6 +143,24 @@ export class GameScene extends Phaser.Scene {
       } else {
         const sprite = this.playerSprites.get(key)!
         sprite.setPosition(toGU(player.x), toGU(player.y))
+      }
+
+      let garlicItem: string | undefined
+      if (player.weapons && typeof player.weapons.find === 'function') {
+        garlicItem = player.weapons.find((w: string) => w.startsWith('garlic'))
+      }
+      if (garlicItem) {
+        const levelStr = garlicItem.split(':')[1]
+        const level = levelStr ? parseInt(levelStr, 10) : 1
+        const garlicRadiusMults = [0.6, 0.8, 1.0, 1.2, 1.5]
+        const lvlIdx = Math.max(1, Math.min(5, level)) - 1
+        const rMult = garlicRadiusMults[lvlIdx]
+        const radius = 60 * rMult
+
+        this.auraGraphics.fillStyle(0x4ade80, 0.15)
+        this.auraGraphics.fillCircle(toGU(player.x), toGU(player.y), radius)
+        this.auraGraphics.lineStyle(1.5, 0x4ade80, 0.4)
+        this.auraGraphics.strokeCircle(toGU(player.x), toGU(player.y), radius)
       }
 
       // Game-over: local player HP reaches 0
@@ -177,7 +227,22 @@ export class GameScene extends Phaser.Scene {
     // --- Projectiles ---
     for (const [key, proj] of projectiles) {
       if (!this.projectileSprites.has(key)) {
-        const frame = (proj.isEnemy as boolean) ? 'proj_enemy' : 'proj_player'
+        let frame = 'proj_player'
+        if (proj.isEnemy) {
+          frame = 'proj_enemy'
+        } else {
+          if (key.includes('magic_wand')) {
+            frame = 'proj_magic_wand'
+          } else if (key.includes('holy_wand')) {
+            frame = 'proj_holy_wand'
+          } else if (key.includes('knife')) {
+            frame = 'proj_knife'
+          } else if (key.includes('thousand_edge')) {
+            frame = 'proj_thousand_edge'
+          } else if (key.startsWith('bible')) {
+            frame = 'proj_bible'
+          }
+        }
         const sprite = this.add.sprite(toGU(proj.x), toGU(proj.y), 'entities', frame)
         sprite.setDepth(3)
         this.projectileSprites.set(key, sprite)
@@ -237,11 +302,19 @@ export class GameScene extends Phaser.Scene {
     this.gameOverEmitted = true
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const state = this.room.state as any
+
+    const weapons = player?.weapons ? Array.from(player.weapons) : this.lastWeapons
+    const passives = player?.passives ? Array.from(player.passives) : this.lastPassives
+    const level = (player?.level as number) ?? this.lastLevel
+    const xp = (player?.xp as number) ?? this.lastXp
+
     this.game.events.emit('gameover', {
       killCount: (this.game.registry.get('killCount') as number) ?? 0,
       elapsedMs: (state?.elapsedMs as number) ?? 0,
-      level: (player?.level as number) ?? 1,
-      xp: (player?.xp as number) ?? 0,
+      level,
+      xp,
+      weapons,
+      passives,
     })
     // Leave room so server stops ticking this client's player
     void this.room.leave()

@@ -118,6 +118,7 @@ export class SoloRoom extends Room<{ state: GameStateSchema }> {
       this.pendingUpgradeOptions.delete(sessionId)
       this.simulationPaused = false
       mirrorStateToSchema(this.plainState, this.state)
+      client.send('upgrade_applied', { upgradeId })
     })
 
     // Wildcard handler: silently drop unknown message types (SC-4 anti-cheat).
@@ -171,7 +172,7 @@ export class SoloRoom extends Room<{ state: GameStateSchema }> {
       level: 1,
       xp: 0,
       speed: 10_000,
-      weapons: ['magic_wand'],
+      weapons: ['magic_wand:1'],
       passives: [],
     }
 
@@ -187,7 +188,7 @@ export class SoloRoom extends Room<{ state: GameStateSchema }> {
     pSchema.maxHp = player.maxHp
     pSchema.level = player.level
     pSchema.xp = player.xp
-    pSchema.weapons.push('magic_wand')
+    pSchema.weapons.push('magic_wand:1')
     this.state.players.set(client.sessionId, pSchema)
   }
 
@@ -222,8 +223,10 @@ export class SoloRoom extends Room<{ state: GameStateSchema }> {
       const prevLevel = this.prevLevels.get(sessionId) ?? 1
       if (player.level > prevLevel) {
         this.prevLevels.set(sessionId, player.level)
-        this.pauseAndSendLevelUp(sessionId)
-        return // Pause immediately, do not mirror further
+        const paused = this.pauseAndSendLevelUp(sessionId)
+        if (paused) {
+          return // Pause immediately, do not mirror further
+        }
       }
       this.prevLevels.set(sessionId, player.level)
     }
@@ -235,16 +238,20 @@ export class SoloRoom extends Room<{ state: GameStateSchema }> {
 
     if (elapsed >= FIRST_CHECK_MS && this.rareEventElapsedAtLastCheck === 0) {
       this.rareEventElapsedAtLastCheck = FIRST_CHECK_MS
-      this.triggerRareEvent()
-      return // Pause immediately
+      const paused = this.triggerRareEvent()
+      if (paused) {
+        return // Pause immediately
+      }
     } else if (
       this.rareEventElapsedAtLastCheck > 0 &&
       elapsed - this.rareEventElapsedAtLastCheck >= REPEAT_MS
     ) {
       this.rareEventElapsedAtLastCheck += REPEAT_MS
       if (this.prng.next() < 0.25) {
-        this.triggerRareEvent()
-        return // Pause immediately
+        const paused = this.triggerRareEvent()
+        if (paused) {
+          return // Pause immediately
+        }
       }
     }
 
@@ -252,9 +259,13 @@ export class SoloRoom extends Room<{ state: GameStateSchema }> {
     mirrorStateToSchema(this.plainState, this.state)
   }
 
-  private pauseAndSendLevelUp(sessionId: string): void {
-    this.simulationPaused = true
+  private pauseAndSendLevelUp(sessionId: string): boolean {
     const options = selectUpgradeOptions(this.plainState, sessionId, this.prng)
+    if (options.length === 0) {
+      return false
+    }
+
+    this.simulationPaused = true
     this.pendingUpgradeOptions.set(sessionId, options)
 
     const client = this.clients.find((c) => c.sessionId === sessionId)
@@ -266,13 +277,17 @@ export class SoloRoom extends Room<{ state: GameStateSchema }> {
       this.autoSelectUpgrade(sessionId)
     }, 15_000)
     this.upgradeTimeouts.set(sessionId, timeout)
+    return true
   }
 
-  private triggerRareEvent(): void {
-    this.simulationPaused = true
+  private triggerRareEvent(): boolean {
     const sessionId = Array.from(this.plainState.players.keys())[0]
     if (sessionId) {
       const options = selectUpgradeOptions(this.plainState, sessionId, this.prng)
+      if (options.length === 0) {
+        return false
+      }
+      this.simulationPaused = true
       this.pendingUpgradeOptions.set(sessionId, options)
       this.broadcast('rare_event', { options })
 
@@ -280,7 +295,9 @@ export class SoloRoom extends Room<{ state: GameStateSchema }> {
         this.autoSelectUpgrade(sessionId)
       }, 15_000)
       this.upgradeTimeouts.set(sessionId, timeout)
+      return true
     }
+    return false
   }
 
   private autoSelectUpgrade(sessionId: string): void {
@@ -325,6 +342,11 @@ export class SoloRoom extends Room<{ state: GameStateSchema }> {
     this.pendingUpgradeOptions.delete(sessionId)
     this.simulationPaused = false
     mirrorStateToSchema(this.plainState, this.state)
+
+    const client = this.clients.find((c) => c.sessionId === sessionId)
+    if (client) {
+      client.send('upgrade_applied', { upgradeId })
+    }
   }
 }
 

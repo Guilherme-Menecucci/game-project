@@ -23,6 +23,8 @@ import type { PlainGameState, PlainPlayerState, PlainEnemyState } from './state.
 import { UniformGrid, WORLD_W, WORLD_H } from './spatialGrid.js'
 import type { Prng } from './prng.js'
 import { XP_PER_ARCHETYPE, rollPickupDrop } from './spawn.js'
+import type { PlayerInput } from './schemas.js'
+import { weaponCatalog } from './weaponCatalog.js'
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -97,61 +99,244 @@ function nearestPlayer(
 
 // ─── autoFire ─────────────────────────────────────────────────────────────────
 
-/**
- * autoFire(state, prng) — fires player projectiles toward nearest enemy.
- * Fires only on ticks where (state.tick % AUTO_FIRE_INTERVAL_TICKS) === 0.
- * If no enemy, fires at random direction (prng-based for determinism).
- */
-export function autoFire(state: PlainGameState, prng: Prng): PlainGameState {
-  if (state.tick % AUTO_FIRE_INTERVAL_TICKS !== 0) {
-    return state
-  }
+interface WeaponStats {
+  id: string
+  damage: number
+  fireRateTicks: number
+  projectileSpeed: number
+}
 
+function getWeaponStats(weaponId: string, level: number = 1): WeaponStats {
+  if (weaponId === 'holy_wand') {
+    return {
+      id: 'holy_wand',
+      damage: 30,
+      fireRateTicks: 1,
+      projectileSpeed: 15_000,
+    }
+  }
+  if (weaponId === 'thousand_edge') {
+    return {
+      id: 'thousand_edge',
+      damage: 40,
+      fireRateTicks: 1,
+      projectileSpeed: 20_000,
+    }
+  }
+  const entry = weaponCatalog[weaponId]
+  if (entry) {
+    const dmgMults = [0.3, 0.5, 0.8, 1.1, 1.5]
+    const cdMults = [1.5, 1.2, 1.0, 0.8, 0.6]
+    const speedMults = [0.7, 0.85, 1.0, 1.1, 1.2]
+
+    const lvlIdx = Math.max(1, Math.min(5, level)) - 1
+    const dmgMult = dmgMults[lvlIdx]
+    const cdMult = cdMults[lvlIdx]
+    const speedMult = speedMults[lvlIdx]
+
+    return {
+      id: entry.id,
+      damage: Math.round(entry.damage * dmgMult),
+      fireRateTicks: Math.max(1, Math.round(entry.fireRateTicks * cdMult)),
+      projectileSpeed: Math.round((entry.projectileSpeed / 10) * speedMult),
+    }
+  }
+  return {
+    id: 'magic_wand',
+    damage: 10,
+    fireRateTicks: 20,
+    projectileSpeed: 15_000,
+  }
+}
+
+/**
+ * autoFire(state, inputs, prng) — fires player projectiles toward nearest enemy or movement direction.
+ * Iterates through all player weapons, applying passive modifiers.
+ */
+export function autoFire(
+  state: PlainGameState,
+  inputs: Map<string, PlayerInput>,
+  prng: Prng
+): PlainGameState {
   const newProjectiles = new Map(state.projectiles)
+  const newEnemies = new Map(state.enemies)
+  const newGems = new Map(state.gems)
+  const newPickups = new Map(state.pickups)
   let changed = false
 
   for (const [playerId, player] of state.players) {
-    // Find nearest enemy
-    let nearestEnemy: PlainEnemyState | null = null
-    let nearestDistSq = Infinity
-    for (const enemy of state.enemies.values()) {
-      const distSq = toroidalDistSq(player.x, player.y, enemy.x, enemy.y)
-      if (distSq < nearestDistSq) {
-        nearestDistSq = distSq
-        nearestEnemy = enemy
+    const playerWeapons =
+      player.weapons && player.weapons.length > 0 ? player.weapons : ['magic_wand:1']
+
+    let spinachLvl = 0
+    let emptyTomeLvl = 0
+    let bracerLvl = 0
+
+    for (const p of player.passives) {
+      const [pId, pLvlStr] = p.split(':')
+      const level = pLvlStr ? parseInt(pLvlStr, 10) : 1
+      if (pId === 'spinach') spinachLvl = level
+      if (pId === 'empty_tome') emptyTomeLvl = level
+      if (pId === 'bracer') bracerLvl = level
+    }
+
+    const SPINACH_MULTS = [1.0, 1.05, 1.1, 1.15, 1.2, 1.3]
+    const EMPTY_TOME_MULTS = [1.0, 0.95, 0.9, 0.85, 0.8, 0.65]
+    const BRACER_MULTS = [1.0, 1.05, 1.1, 1.15, 1.2, 1.35]
+
+    const damageMult = SPINACH_MULTS[spinachLvl] || 1.0
+    const speedMult = BRACER_MULTS[bracerLvl] || 1.0
+    const cooldownMult = EMPTY_TOME_MULTS[emptyTomeLvl] || 1.0
+
+    for (const weaponItem of playerWeapons) {
+      const [weaponId, levelStr] = weaponItem.split(':')
+      const level = levelStr ? parseInt(levelStr, 10) : 1
+      const stats = getWeaponStats(weaponId, level)
+      const cooldown = Math.max(1, Math.round(stats.fireRateTicks * cooldownMult))
+
+      if (state.tick % cooldown !== 0) {
+        continue
+      }
+
+      const damage = Math.round(stats.damage * damageMult)
+      const projectileSpeed = Math.round(stats.projectileSpeed * speedMult)
+
+      if (weaponId === 'garlic') {
+        const garlicRadiusMults = [0.6, 0.8, 1.0, 1.2, 1.5]
+        const lvlIdx = Math.max(1, Math.min(5, level)) - 1
+        const rMult = garlicRadiusMults[lvlIdx]
+        const garlicRadius = 60_000 * rMult
+        const garlicRadiusSq = garlicRadius * garlicRadius
+        for (const [enemyId, enemy] of newEnemies) {
+          const distSq = toroidalDistSq(player.x, player.y, enemy.x, enemy.y)
+          if (distSq <= garlicRadiusSq) {
+            const updatedHp = enemy.hp - damage
+            if (updatedHp <= 0) {
+              newEnemies.delete(enemyId)
+              const gemId = `gem_${state.tick}_${enemyId}`
+              const xpValue = XP_PER_ARCHETYPE[enemy.archetype]
+              newGems.set(gemId, {
+                id: gemId,
+                x: enemy.x,
+                y: enemy.y,
+                value: xpValue,
+              })
+              const pickup = rollPickupDrop(enemy.archetype, enemy.x, enemy.y, prng)
+              if (pickup !== null) {
+                newPickups.set(pickup.id, pickup)
+              }
+            } else {
+              newEnemies.set(enemyId, { ...enemy, hp: updatedHp })
+            }
+          }
+        }
+        changed = true
+      } else if (weaponId === 'knife' || weaponId === 'thousand_edge') {
+        const input = inputs?.get(playerId)
+        let angle: number
+        if (input && input.moveVector && (input.moveVector.x !== 0 || input.moveVector.y !== 0)) {
+          angle = Math.atan2(input.moveVector.y, input.moveVector.x)
+        } else if (input && input.aimAngle !== undefined) {
+          angle = input.aimAngle
+        } else {
+          let nearestEnemy: PlainEnemyState | null = null
+          let nearestDistSq = Infinity
+          for (const enemy of state.enemies.values()) {
+            const distSq = toroidalDistSq(player.x, player.y, enemy.x, enemy.y)
+            if (distSq < nearestDistSq) {
+              nearestDistSq = distSq
+              nearestEnemy = enemy
+            }
+          }
+          if (nearestEnemy !== null) {
+            const dx = toroidalDelta(player.x, nearestEnemy.x, WORLD_W)
+            const dy = toroidalDelta(player.y, nearestEnemy.y, WORLD_H)
+            angle = Math.atan2(dy, dx)
+          } else {
+            angle = prng.next() * 2 * Math.PI
+          }
+        }
+
+        const vx = Math.round(Math.cos(angle) * projectileSpeed)
+        const vy = Math.round(Math.sin(angle) * projectileSpeed)
+        const projId = `proj_${weaponId}_${state.tick}_${playerId}`
+
+        newProjectiles.set(projId, {
+          id: projId,
+          x: player.x,
+          y: player.y,
+          vx,
+          vy,
+          ownerId: playerId,
+          isEnemy: false,
+          damage,
+          lifetime: PLAYER_PROJECTILE_LIFETIME,
+        })
+        changed = true
+      } else if (weaponId === 'bible') {
+        for (let i = 0; i < level; i++) {
+          const projId = `bible_${state.tick}_${i}_${playerId}`
+          newProjectiles.set(projId, {
+            id: projId,
+            x: player.x,
+            y: player.y,
+            vx: 0,
+            vy: 0,
+            ownerId: playerId,
+            isEnemy: false,
+            damage,
+            lifetime: PLAYER_PROJECTILE_LIFETIME,
+          })
+        }
+        changed = true
+      } else {
+        let nearestEnemy: PlainEnemyState | null = null
+        let nearestDistSq = Infinity
+        for (const enemy of state.enemies.values()) {
+          const distSq = toroidalDistSq(player.x, player.y, enemy.x, enemy.y)
+          if (distSq < nearestDistSq) {
+            nearestDistSq = distSq
+            nearestEnemy = enemy
+          }
+        }
+
+        let angle: number
+        if (nearestEnemy !== null) {
+          const dx = toroidalDelta(player.x, nearestEnemy.x, WORLD_W)
+          const dy = toroidalDelta(player.y, nearestEnemy.y, WORLD_H)
+          angle = Math.atan2(dy, dx)
+        } else {
+          angle = prng.next() * 2 * Math.PI
+        }
+
+        const vx = Math.round(Math.cos(angle) * projectileSpeed)
+        const vy = Math.round(Math.sin(angle) * projectileSpeed)
+        const projId = `proj_${weaponId}_${state.tick}_${playerId}`
+
+        newProjectiles.set(projId, {
+          id: projId,
+          x: player.x,
+          y: player.y,
+          vx,
+          vy,
+          ownerId: playerId,
+          isEnemy: false,
+          damage,
+          lifetime: PLAYER_PROJECTILE_LIFETIME,
+        })
+        changed = true
       }
     }
-
-    let angle: number
-    if (nearestEnemy !== null) {
-      const dx = toroidalDelta(player.x, nearestEnemy.x, WORLD_W)
-      const dy = toroidalDelta(player.y, nearestEnemy.y, WORLD_H)
-      angle = Math.atan2(dy, dx)
-    } else {
-      // No enemy — fire at random direction (prng-based)
-      angle = prng.next() * 2 * Math.PI
-    }
-
-    const vx = Math.round(Math.cos(angle) * PLAYER_PROJECTILE_SPEED)
-    const vy = Math.round(Math.sin(angle) * PLAYER_PROJECTILE_SPEED)
-
-    const projId = `proj_${state.tick}_${playerId}`
-    newProjectiles.set(projId, {
-      id: projId,
-      x: player.x,
-      y: player.y,
-      vx,
-      vy,
-      ownerId: playerId,
-      isEnemy: false,
-      damage: PROJECTILE_DAMAGE,
-      lifetime: PLAYER_PROJECTILE_LIFETIME,
-    })
-    changed = true
   }
 
   if (!changed) return state
-  return { ...state, projectiles: newProjectiles }
+  return {
+    ...state,
+    projectiles: newProjectiles,
+    enemies: newEnemies,
+    gems: newGems,
+    pickups: newPickups,
+  }
 }
 
 // ─── applyEnemyAI ─────────────────────────────────────────────────────────────
@@ -268,6 +453,33 @@ export function applyProjectileMovement(state: PlainGameState): PlainGameState {
       newProjectiles.delete(id)
       continue
     }
+
+    if (id.startsWith('bible_')) {
+      const owner = state.players.get(proj.ownerId)
+      if (owner) {
+        const parts = id.split('_')
+        const spawnTick = parseInt(parts[1] || '0', 10)
+        const index = parseInt(parts[2] || '0', 10)
+
+        let bibleLvl = 1
+        const bibleItem = owner.weapons.find((w) => w.startsWith('bible'))
+        if (bibleItem) {
+          bibleLvl = parseInt(bibleItem.split(':')[1] || '1', 10)
+        }
+
+        const orbitRadius = 60_000 // 60 game units in sub-units
+        const angle = state.tick * 0.08 + spawnTick * 0.1 + index * ((2 * Math.PI) / bibleLvl)
+
+        newProjectiles.set(id, {
+          ...proj,
+          x: toroidal(owner.x + Math.round(Math.cos(angle) * orbitRadius), WORLD_W),
+          y: toroidal(owner.y + Math.round(Math.sin(angle) * orbitRadius), WORLD_H),
+          lifetime: newLifetime,
+        })
+        continue
+      }
+    }
+
     newProjectiles.set(id, {
       ...proj,
       x: toroidal(proj.x + proj.vx, WORLD_W),
@@ -472,10 +684,15 @@ export function applyGemCollection(state: PlainGameState): PlainGameState {
   return { ...state, gems: newGems, players: newPlayers }
 }
 
-// ─── applyLevelUp ─────────────────────────────────────────────────────────────
+export function getXpThresholdForLevel(level: number): number {
+  const base = 10
+  if (level <= 1) return base
+  const scale = 1 + (level - 1) * 0.002 + (level - 1) * (level - 2) * 0.0005
+  return Math.max(base, Math.round(base * scale))
+}
 
 /**
- * applyLevelUp(state) — level up players that have reached XP_LEVEL_THRESHOLD.
+ * applyLevelUp(state) — level up players that have reached their level threshold.
  * Repeating: while xp >= threshold, level++, xp -= threshold.
  * T-3-02 mitigation: level only incremented here, never from client message.
  */
@@ -484,11 +701,13 @@ export function applyLevelUp(state: PlainGameState): PlainGameState {
   const newPlayers = new Map(state.players)
 
   for (const [playerId, player] of state.players) {
-    if (player.xp >= XP_LEVEL_THRESHOLD) {
+    let threshold = getXpThresholdForLevel(player.level)
+    if (player.xp >= threshold) {
       let { xp, level } = player
-      while (xp >= XP_LEVEL_THRESHOLD) {
-        xp -= XP_LEVEL_THRESHOLD
+      while (xp >= threshold) {
+        xp -= threshold
         level++
+        threshold = getXpThresholdForLevel(level)
       }
       newPlayers.set(playerId, { ...player, xp, level })
       changed = true
@@ -499,7 +718,7 @@ export function applyLevelUp(state: PlainGameState): PlainGameState {
   return { ...state, players: newPlayers }
 }
 
-export const PICKUP_COLLECT_RADIUS = 250_000 // 25 game units
+export const PICKUP_COLLECT_RADIUS = 10_000 // 1 game unit (same as GEM_COLLECT_SNAP)
 
 /**
  * applyPickupCollection — checks player proximity to pickups and applies collection effects (GAME-17).

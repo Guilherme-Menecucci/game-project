@@ -8,6 +8,7 @@ export interface UpgradeOption {
   id: string
   displayName: string
   kind: 'weapon' | 'passive' | 'evolution'
+  description: string
 }
 
 /**
@@ -38,46 +39,108 @@ export function selectUpgradeOptions(
 
   const pool: UpgradeOption[] = []
 
+  // Parse current levels of player's weapons and passives
+  const currentWeaponLevels: Record<string, number> = {}
+  for (const w of player.weapons) {
+    const [id, lvlStr] = w.split(':')
+    const level = lvlStr ? parseInt(lvlStr, 10) : 1
+    currentWeaponLevels[id] = level
+  }
+
+  const currentPassiveLevels: Record<string, number> = {}
+  for (const p of player.passives) {
+    const [id, lvlStr] = p.split(':')
+    const level = lvlStr ? parseInt(lvlStr, 10) : 1
+    currentPassiveLevels[id] = level
+  }
+
+  // Identify prerequisites of currently owned evolved weapons to exclude them
+  const evolvedPrereqWeapons = new Set<string>()
+  const evolvedPrereqPassives = new Set<string>()
+
+  for (const w of player.weapons) {
+    const evo = evolutionCatalog[w]
+    if (evo) {
+      evolvedPrereqWeapons.add(evo.requires.weapon)
+      evolvedPrereqPassives.add(evo.requires.passive)
+    }
+  }
+
   // 1. Add weapons from catalog
   for (const id of Object.keys(weaponCatalog)) {
-    const isOwned = player.weapons.includes(id)
-    const isFull = player.weapons.length >= 6
-    if (isFull && !isOwned) {
-      // If weapon slots are full, do not offer new weapons
+    const isConsumed = evolvedPrereqWeapons.has(id)
+    if (isConsumed) {
       continue
     }
-    pool.push({
-      id,
-      displayName: weaponCatalog[id].displayName,
-      kind: 'weapon',
-    })
+
+    const currentLvl = currentWeaponLevels[id]
+    if (currentLvl !== undefined) {
+      // Offer upgrade to next level if below max (5)
+      if (currentLvl < 5) {
+        pool.push({
+          id: `${id}:${currentLvl + 1}`,
+          displayName: `${weaponCatalog[id].displayName} (Lv ${currentLvl + 1})`,
+          kind: 'weapon',
+          description: `Upgrade ${weaponCatalog[id].displayName} to Level ${currentLvl + 1}.`,
+        })
+      }
+    } else {
+      // Offer acquiring at Lv 1 if not full
+      const isFull = player.weapons.length >= 6
+      if (!isFull) {
+        pool.push({
+          id: `${id}:1`,
+          displayName: `${weaponCatalog[id].displayName} (Lv 1)`,
+          kind: 'weapon',
+          description: weaponCatalog[id].description,
+        })
+      }
+    }
   }
 
   // 2. Add passives from catalog
   for (const id of Object.keys(passiveCatalog)) {
-    const isOwned = player.passives.includes(id)
-    const isFull = player.passives.length >= 6
-    if (isFull && !isOwned) {
-      // If passive slots are full, do not offer new passives
+    const isConsumed = evolvedPrereqPassives.has(id)
+    if (isConsumed) {
       continue
     }
-    pool.push({
-      id,
-      displayName: passiveCatalog[id].displayName,
-      kind: 'passive',
-    })
+
+    const currentLvl = currentPassiveLevels[id]
+    if (currentLvl !== undefined) {
+      // Offer upgrade to next level if below max (5)
+      if (currentLvl < 5) {
+        pool.push({
+          id: `${id}:${currentLvl + 1}`,
+          displayName: `${passiveCatalog[id].displayName} (Lv ${currentLvl + 1})`,
+          kind: 'passive',
+          description: `Upgrade ${passiveCatalog[id].displayName} to Level ${currentLvl + 1}.`,
+        })
+      }
+    } else {
+      // Offer acquiring at Lv 1 if not full
+      const isFull = player.passives.length >= 6
+      if (!isFull) {
+        pool.push({
+          id: `${id}:1`,
+          displayName: `${passiveCatalog[id].displayName} (Lv 1)`,
+          kind: 'passive',
+          description: passiveCatalog[id].description,
+        })
+      }
+    }
   }
 
-  // 3. Add evolutions from catalog
+  // 3. Add evolutions from catalog - ONLY if required items are Level 5
   for (const id of Object.keys(evolutionCatalog)) {
     const evo = evolutionCatalog[id]
-    const hasWeapon = player.weapons.includes(evo.requires.weapon)
-    const hasPassive = player.passives.includes(evo.requires.passive)
-    if (hasWeapon && hasPassive) {
+    const hasMaxWeapon = currentWeaponLevels[evo.requires.weapon] === 5
+    const hasMaxPassive = currentPassiveLevels[evo.requires.passive] === 5
+    if (hasMaxWeapon && hasMaxPassive) {
       pool.push({
         id,
         displayName: evo.displayName,
         kind: 'evolution',
+        description: evo.description,
       })
     }
   }
@@ -103,9 +166,8 @@ export function applyUpgrade(
   // 1. Check if evolution
   const evo = evolutionCatalog[upgradeId]
   if (evo) {
-    const weaponIdx = player.weapons.indexOf(evo.requires.weapon)
-    const passiveIdx = player.passives.indexOf(evo.requires.passive)
-    // Verify prerequisites actually met on server
+    const weaponIdx = player.weapons.findIndex((w) => w.startsWith(evo.requires.weapon))
+    const passiveIdx = player.passives.findIndex((p) => p.startsWith(evo.requires.passive))
     if (weaponIdx !== -1 && passiveIdx !== -1) {
       player.weapons.splice(weaponIdx, 1)
       player.passives.splice(passiveIdx, 1)
@@ -115,8 +177,12 @@ export function applyUpgrade(
   }
 
   // 2. Check if weapon
-  if (weaponCatalog[upgradeId]) {
-    if (!player.weapons.includes(upgradeId)) {
+  const [wId] = upgradeId.split(':')
+  if (weaponCatalog[wId]) {
+    const idx = player.weapons.findIndex((w) => w.startsWith(wId))
+    if (idx !== -1) {
+      player.weapons[idx] = upgradeId
+    } else {
       if (player.weapons.length < 6) {
         player.weapons.push(upgradeId)
       }
@@ -125,12 +191,26 @@ export function applyUpgrade(
   }
 
   // 3. Check if passive
-  if (passiveCatalog[upgradeId]) {
-    if (!player.passives.includes(upgradeId)) {
+  const [pId] = upgradeId.split(':')
+  if (passiveCatalog[pId]) {
+    const idx = player.passives.findIndex((p) => p.startsWith(pId))
+    if (idx !== -1) {
+      player.passives[idx] = upgradeId
+    } else {
       if (player.passives.length < 6) {
         player.passives.push(upgradeId)
       }
     }
+
+    // Recalculate speed if boots upgraded
+    let bootsLvl = 0
+    const bootsItem = player.passives.find((p) => p.startsWith('boots'))
+    if (bootsItem) {
+      bootsLvl = parseInt(bootsItem.split(':')[1] || '1', 10)
+    }
+    const BOOTS_SPEEDS = [0, 150, 300, 450, 600, 800]
+    player.speed = 10_000 + (BOOTS_SPEEDS[bootsLvl] || 0)
+
     return nextState
   }
 

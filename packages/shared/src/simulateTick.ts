@@ -131,8 +131,9 @@ export function simulateTick(
 
     // Normalize to integer sub-unit displacement
     const mag = Math.sqrt(dx * dx + dy * dy)
-    const vx = Math.round((dx * SPEED_SUBUNITS) / mag)
-    const vy = Math.round((dy * SPEED_SUBUNITS) / mag)
+    const speed = player.speed ?? SPEED_SUBUNITS
+    const vx = Math.round((dx * speed) / mag)
+    const vy = Math.round((dy * speed) / mag)
 
     // Apply toroidal wrap
     player.x = toroidal(player.x + vx, WORLD_W)
@@ -148,7 +149,7 @@ export function simulateTick(
   newState = spawnEnemies(newState, prng)
 
   // 6. Auto-fire player projectiles toward nearest enemy
-  newState = autoFire(newState, prng)
+  newState = autoFire(newState, inputs, prng)
 
   // 7. Move all projectiles
   newState = applyProjectileMovement(newState)

@@ -10,7 +10,7 @@ function signTestGameToken(userId = 'test-user'): string {
   return jwt.sign({ userId, type: 'game' }, TEST_JWT_SECRET, { expiresIn: '5m' })
 }
 
-describe('SoloRoom levelup and pause', () => {
+describe('SoloRoom levelup, pause, and rare event', () => {
   let server: ColyseusTestServer
 
   beforeAll(async () => {
@@ -103,22 +103,31 @@ describe('SoloRoom levelup and pause', () => {
 
     await client.leave()
   })
-})
 
-describe('SoloRoom rare event', () => {
-  let server: ColyseusTestServer
+  it('does not pause when player levels up but there are no upgrade options available', async () => {
+    const room = (await server.createRoom('solo_room', {})) as any
 
-  beforeAll(async () => {
-    server = await boot(appConfig)
-  })
+    server.sdk.auth.token = signTestGameToken()
+    const client = await server.connectTo(room)
 
-  afterAll(async () => {
-    await server.shutdown()
-  })
+    const player = room.plainState.players.get(client.sessionId)
+    player.weapons = ['holy_wand', 'thousand_edge', 'garlic:5', 'bible:5']
+    player.passives = ['boots:5', 'spinach:5']
 
-  beforeEach(async () => {
-    await server.cleanup()
-    vi.useRealTimers()
+    let levelUpMsg: any = null
+    client.onMessage('levelup', (msg) => {
+      levelUpMsg = msg
+    })
+
+    player.level = 2
+    await room.tick()
+
+    await new Promise((resolve) => setTimeout(resolve, 50))
+
+    expect(room.simulationPaused).toBe(false)
+    expect(levelUpMsg).toBeNull()
+
+    await client.leave()
   })
 
   it('fires rare_event after elapsed threshold (GAME-11)', async () => {

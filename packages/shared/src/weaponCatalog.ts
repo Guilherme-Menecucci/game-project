@@ -6,6 +6,7 @@ export interface WeaponCatalogEntry {
   fireRateTicks: number
   projectileSpeed: number
   evolvesFrom?: never
+  description: string
 }
 
 export interface EvolutionEntry {
@@ -15,6 +16,7 @@ export interface EvolutionEntry {
     weapon: string
     passive: string
   }
+  description: string
 }
 
 export const weaponCatalog: Record<string, WeaponCatalogEntry> = {
@@ -25,6 +27,7 @@ export const weaponCatalog: Record<string, WeaponCatalogEntry> = {
     damage: 10,
     fireRateTicks: 20,
     projectileSpeed: 150_000,
+    description: 'Fires magic projectiles at the nearest enemy.',
   },
   garlic: {
     id: 'garlic',
@@ -33,6 +36,7 @@ export const weaponCatalog: Record<string, WeaponCatalogEntry> = {
     damage: 5,
     fireRateTicks: 10,
     projectileSpeed: 0,
+    description: 'Damages nearby enemies in a circular aura.',
   },
   knife: {
     id: 'knife',
@@ -41,6 +45,7 @@ export const weaponCatalog: Record<string, WeaponCatalogEntry> = {
     damage: 15,
     fireRateTicks: 15,
     projectileSpeed: 200_000,
+    description: 'Fires knives in the direction of movement.',
   },
   bible: {
     id: 'bible',
@@ -49,6 +54,7 @@ export const weaponCatalog: Record<string, WeaponCatalogEntry> = {
     damage: 8,
     fireRateTicks: 30,
     projectileSpeed: 0,
+    description: 'Orbits around the player to block and damage enemies.',
   },
 }
 
@@ -60,6 +66,7 @@ export const evolutionCatalog: Record<string, EvolutionEntry> = {
       weapon: 'magic_wand',
       passive: 'empty_tome',
     },
+    description: 'Evolved Magic Wand. Fires continuously with no cooldown.',
   },
   thousand_edge: {
     id: 'thousand_edge',
@@ -68,5 +75,6 @@ export const evolutionCatalog: Record<string, EvolutionEntry> = {
       weapon: 'knife',
       passive: 'bracer',
     },
+    description: 'Evolved Knife. Fires knives continuously with no cooldown.',
   },
 }

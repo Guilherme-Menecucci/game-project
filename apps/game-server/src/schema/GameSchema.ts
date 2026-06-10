@@ -19,8 +19,8 @@ export class PlayerSchema extends Schema {
   @type('uint32') declare y: number
   @type('uint8') declare hp: number // max 255 — player max HP fits
   @type('uint8') declare maxHp: number
-  @type('uint8') declare level: number // max 255 — level cap fits
-  @type('uint8') declare xp: number // xp within current level (resets at threshold)
+  @type('uint32') declare level: number
+  @type('uint32') declare xp: number
   @type(['string']) weapons = new ArraySchema<string>()
   @type(['string']) passives = new ArraySchema<string>()
 }
