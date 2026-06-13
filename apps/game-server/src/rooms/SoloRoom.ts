@@ -55,6 +55,15 @@ export class SoloRoom extends Room<{ state: GameStateSchema }> {
   private upgradeTimeouts = new Map<string, ReturnType<typeof setTimeout>>()
   private rareEventElapsedAtLastCheck = 0
 
+  // Per-connection WS message rate limiting (PITFALLS S4) — 1s sliding window.
+  // Legitimate clients send input at 20Hz (~20 msg/s); SOFT silently drops
+  // floods, HARD disconnects egregious abuse. Wall-clock based and intentionally
+  // OUTSIDE the deterministic simulation (does not affect simulateTick output).
+  private static readonly RATE_WINDOW_MS = 1000
+  private static readonly RATE_SOFT_LIMIT = 60
+  private static readonly RATE_HARD_LIMIT = 200
+  private messageRate = new Map<string, { count: number; windowStart: number }>()
+
   onCreate(): void {
     this.setState(new GameStateSchema())
 
@@ -75,6 +84,7 @@ export class SoloRoom extends Room<{ state: GameStateSchema }> {
 
     // Register input message handler (T-3-04)
     this.onMessage('input', (client: Client, data: unknown) => {
+      if (!this.allowMessage(client)) return // WS rate limit (T-3-DoS / PITFALLS S4)
       const result = PlayerInputSchema.safeParse(data)
       if (!result.success) return // silently drop invalid input
       this.pendingInputs.set(client.sessionId, result.data)
@@ -82,6 +92,7 @@ export class SoloRoom extends Room<{ state: GameStateSchema }> {
 
     // Register upgrade selected handler (GAME-08)
     this.onMessage('upgrade_selected', (client: Client, data: unknown) => {
+      if (!this.allowMessage(client)) return // WS rate limit (T-3-DoS / PITFALLS S4)
       const result = UpgradeSelectedSchema.safeParse(data)
       if (!result.success) return
       this.handleUpgradeSelected(client.sessionId, result.data.upgradeId)
@@ -89,6 +100,7 @@ export class SoloRoom extends Room<{ state: GameStateSchema }> {
 
     // Register replace slot handler (GAME-09)
     this.onMessage('replace_slot', (client: Client, data: unknown) => {
+      if (!this.allowMessage(client)) return // WS rate limit (T-3-DoS / PITFALLS S4)
       const result = ReplaceSlotSchema.safeParse(data)
       if (!result.success) return
 
@@ -126,8 +138,9 @@ export class SoloRoom extends Room<{ state: GameStateSchema }> {
     // message types in non-devMode, which is a DoS vector.
     // Any message type not explicitly handled above is silently ignored.
     this.onMessage('*', (client: Client, type: string | number, data: unknown) => {
-      // Intentionally empty — unknown messages are silently dropped (SC-4 anti-cheat)
-      void client
+      // Unknown messages are silently dropped (SC-4 anti-cheat), but still count
+      // toward the rate limit so an unknown-type flood triggers disconnect.
+      this.allowMessage(client)
       void type
       void data
     })
@@ -197,11 +210,32 @@ export class SoloRoom extends Room<{ state: GameStateSchema }> {
     this.state.players.delete(client.sessionId)
     this.prevLevels.delete(client.sessionId)
     this.pendingUpgradeOptions.delete(client.sessionId)
+    this.messageRate.delete(client.sessionId)
     const timeout = this.upgradeTimeouts.get(client.sessionId)
     if (timeout) {
       clearTimeout(timeout)
       this.upgradeTimeouts.delete(client.sessionId)
     }
+  }
+
+  /**
+   * Per-connection WS message rate gate (PITFALLS S4). Returns false when the
+   * message should be dropped. Disconnects the client on egregious floods.
+   * Wall-clock based — intentionally OUTSIDE the deterministic simulation.
+   */
+  private allowMessage(client: Client): boolean {
+    const now = Date.now()
+    const rec = this.messageRate.get(client.sessionId)
+    if (rec === undefined || now - rec.windowStart >= SoloRoom.RATE_WINDOW_MS) {
+      this.messageRate.set(client.sessionId, { count: 1, windowStart: now })
+      return true
+    }
+    rec.count++
+    if (rec.count > SoloRoom.RATE_HARD_LIMIT) {
+      client.leave(4290) // custom close code: rate limit exceeded
+      return false
+    }
+    return rec.count <= SoloRoom.RATE_SOFT_LIMIT
   }
 
   /**
