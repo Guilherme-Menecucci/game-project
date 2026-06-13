@@ -1,0 +1,61 @@
+/* HP cluster — top-left backing panel */
+.cluster {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  background: var(--color-hud-backing);
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  padding: var(--space-sm);
+}
+
+.label {
+  font-size: var(--text-label);
+  font-weight: 400;
+  color: var(--color-text-muted);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+  line-height: 1.4;
+}
+
+.value {
+  font-size: var(--text-label);
+  font-weight: 400;
+  color: var(--color-text);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+  line-height: 1.4;
+}
+
+/* HP bar track — 160×8px fixed */
+.track {
+  width: 160px;
+  height: 8px;
+  background: var(--color-hp-track);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+/* HP bar fill — width set via inline style */
+.fill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 100ms linear;
+}
+
+/* Three HP color states */
+.fillHigh {
+  background: var(--color-hp-fill);
+}
+
+.fillMid {
+  background: var(--color-hp-mid);
+}
+
+.fillCritical {
+  background: var(--color-destructive);
+  animation: hp-pulse 1s ease-in-out infinite;
+}
+
+@keyframes hp-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}

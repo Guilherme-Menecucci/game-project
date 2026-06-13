@@ -1,0 +1,33 @@
+.page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-bg);
+  padding: var(--space-xl);
+  box-sizing: border-box;
+}
+
+.content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-lg);
+  width: 100%;
+  max-width: 480px;
+  text-align: center;
+}
+
+.name {
+  font-size: var(--text-heading);
+  font-weight: 600;
+  color: var(--color-text);
+  margin: 0;
+}
+
+.placeholder {
+  font-size: var(--text-body);
+  color: var(--color-text-muted);
+  margin: 0;
+  line-height: 1.5;
+}

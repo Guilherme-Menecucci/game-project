@@ -1,15 +1,24 @@
-// @game/shared — Phase 1 public API
-// Phase 3 will expand PlayerInputSchema with seq and tick fields.
-// Use z.object (not z.tuple) to allow adding fields without breaking the import contract.
-import * as z from 'zod'
+// @game/shared — public API barrel
+// All game schemas, types, and simulation exports.
 
-export const PlayerInputSchema = z.object({
-  moveVector: z.object({
-    x: z.number(),
-    y: z.number(),
-  }),
-  aimAngle: z.number(),
-  actionFlags: z.number().int(),
-})
+// ─── Schemas and input types ──────────────────────────────────────────────────
+export * from './schemas.js'
 
-export type PlayerInput = z.infer<typeof PlayerInputSchema>
+// ─── Phase 3 types and implementations ───────────────────────────────────────
+
+// Real implementations (Task 1: 03-02)
+export * from './state.js'
+export * from './prng.js'
+export * from './spatialGrid.js'
+
+// Real implementations (Task 2: 03-02)
+export * from './simulateTick.js'
+export * from './spawn.js'
+
+// Real implementations (Task 1: 03-06)
+export * from './weapons.js'
+
+// ─── Phase 4 types and implementations ───────────────────────────────────────
+export * from './weaponCatalog.js'
+export * from './passiveCatalog.js'
+export * from './upgrades.js'

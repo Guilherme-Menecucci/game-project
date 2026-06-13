@@ -1,0 +1,58 @@
+:root {
+  /* Color tokens from UI-SPEC §Color */
+  --color-bg: #0e0f14;
+  --color-surface: #1a1c25;
+  --color-accent: #6c63ff;
+  --color-accent-hover: #5a52e0;
+  --color-destructive: #e05252;
+  --color-text: #f0f0f5;
+  --color-text-muted: #8a8a9a;
+  --color-border: #2a2c38;
+  --color-border-focus: #6c63ff;
+  --color-error: #e05252;
+
+  /* Spacing tokens from UI-SPEC §Spacing */
+  --space-xs: 4px;
+  --space-sm: 8px;
+  --space-md: 16px;
+  --space-lg: 24px;
+  --space-xl: 32px;
+  --space-2xl: 48px;
+  --space-3xl: 64px;
+
+  /* Typography tokens from UI-SPEC §Typography */
+  --text-body: 16px;
+  --text-label: 14px;
+  --text-heading: 24px;
+  --text-display: 36px;
+
+  /* Font stack from UI-SPEC §Design System */
+  --font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+/* ─── Phase 3 game-specific tokens ─── */
+:root {
+  --color-hp-fill: #22c55e;                    /* HP bar fill — HP > 50% */
+  --color-hp-mid: #eab308;                     /* HP bar fill — HP 25–50% */
+  /* HP < 25%: reuse --color-destructive (#e05252) — no new token needed */
+  --color-hp-track: #2a2c38;                   /* HP bar track (same as --color-border) */
+  --color-xp-fill: #6c63ff;                    /* XP bar fill (same as --color-accent) */
+  --color-xp-track: #2a2c38;                   /* XP bar track (same as --color-border) */
+  --color-hud-backing: rgba(14, 15, 20, 0.75); /* Semi-opaque HUD cluster backing */
+}
+
+/* ─── Phase 4 game-specific tokens ─── */
+:root {
+  --color-upgrade-weapon: #4a9eff;
+  --color-upgrade-passive: #44cc88;
+  --color-upgrade-evolution: #ffcc00;
+  --color-card-base: #1a1a2e;
+  --color-slot-empty: #2a2a3e;
+}
+
+body {
+  margin: 0;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-family);
+}
