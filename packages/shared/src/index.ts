@@ -22,3 +22,6 @@ export * from './weapons.js'
 export * from './weaponCatalog.js'
 export * from './passiveCatalog.js'
 export * from './upgrades.js'
+
+// ─── Phase 5 (stubs — replaced in Wave 1 plan 05-02) ───────────────────────────
+export * from './__stubs__/phase5stubs.js'

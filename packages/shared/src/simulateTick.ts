@@ -27,6 +27,7 @@ import type {
   PlainGemState,
   PlainProjectileState,
   PlainPickupState,
+  PlainBossState,
 } from './state.js'
 import { PlayerInputSchema } from './schemas.js'
 import type { PlayerInput } from './schemas.js'
@@ -55,7 +56,16 @@ export const SPEED_SUBUNITS = 10_000
 export function cloneState(state: PlainGameState): PlainGameState {
   const players = new Map<string, PlainPlayerState>()
   for (const [id, p] of state.players) {
-    players.set(id, { ...p, weapons: [...p.weapons], passives: [...p.passives] })
+    players.set(id, {
+      ...p,
+      weapons: [...p.weapons],
+      passives: [...p.passives],
+      // Deep per-slot clone — mutating a clone's weaponStats entry must never
+      // affect the original (D-21, Pitfall 3).
+      weaponStats: Object.fromEntries(
+        Object.entries(p.weaponStats ?? {}).map(([k, v]) => [k, { ...v }])
+      ),
+    })
   }
   const enemies = new Map<string, PlainEnemyState>()
   for (const [id, e] of state.enemies) {
@@ -73,6 +83,11 @@ export function cloneState(state: PlainGameState): PlainGameState {
   for (const [id, pk] of state.pickups) {
     pickups.set(id, { ...pk })
   }
+  // Boss entities have no nested objects/arrays — shallow per-entry clone is sufficient.
+  const bosses = new Map<string, PlainBossState>()
+  for (const [id, b] of state.bosses ?? new Map<string, PlainBossState>()) {
+    bosses.set(id, { ...b })
+  }
   return {
     tick: state.tick,
     elapsedMs: state.elapsedMs,
@@ -82,6 +97,10 @@ export function cloneState(state: PlainGameState): PlainGameState {
     projectiles,
     pickups,
     prngSeed: state.prngSeed,
+    kills: state.kills ?? 0,
+    bosses,
+    milestonesSpawned: { ...(state.milestonesSpawned ?? {}) },
+    result: state.result,
   }
 }
 
