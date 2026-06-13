@@ -83,19 +83,20 @@ export function GamePage() {
       roomRef.current = room as Room
 
       // Track weapons and passives
-      room.onStateChange(
-        (state: { players?: Map<string, { weapons?: string[]; passives?: string[] }> }) => {
-          const myPlayer = state.players?.get(room.sessionId)
-          if (myPlayer) {
-            if (myPlayer.weapons) {
-              setWeapons(Array.from(myPlayer.weapons))
-            }
-            if (myPlayer.passives) {
-              setPassives(Array.from(myPlayer.passives))
-            }
+      room.onStateChange((stateUpdate: unknown) => {
+        const state = stateUpdate as {
+          players?: Map<string, { weapons?: string[]; passives?: string[] }>
+        }
+        const myPlayer = state.players?.get(room.sessionId)
+        if (myPlayer) {
+          if (myPlayer.weapons) {
+            setWeapons(Array.from(myPlayer.weapons))
+          }
+          if (myPlayer.passives) {
+            setPassives(Array.from(myPlayer.passives))
           }
         }
-      )
+      })
 
       // Add progression listeners
       room.onMessage('levelup', (data: { options: UpgradeOption[] }) => {
