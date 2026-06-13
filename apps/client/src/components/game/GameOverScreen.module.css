@@ -95,3 +95,63 @@
 .exitLink:hover {
   color: var(--color-text);
 }
+
+.loadoutSection {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  margin-top: var(--space-sm);
+  align-items: center;
+}
+
+.loadoutHeading {
+  font-size: 13px;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+  margin: 0;
+  letter-spacing: 0.05em;
+}
+
+.loadoutRow {
+  width: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+}
+
+.loadoutItem {
+  position: relative;
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  background-color: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  font-size: 20px;
+  cursor: help;
+  transition: transform 150ms ease, background-color 150ms ease;
+}
+
+.loadoutItem:hover {
+  transform: scale(1.05);
+  background-color: rgba(255, 255, 255, 0.06);
+}
+
+.itemIcon {
+  line-height: 1;
+}
+
+.itemLvlBadge {
+  position: absolute;
+  bottom: 2px;
+  right: 4px;
+  font-size: 9px;
+  font-weight: 800;
+  color: #ffcc00;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
+}

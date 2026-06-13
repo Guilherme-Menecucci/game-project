@@ -17,3 +17,8 @@ export * from './spawn.js'
 
 // Real implementations (Task 1: 03-06)
 export * from './weapons.js'
+
+// ─── Phase 4 types and implementations ───────────────────────────────────────
+export * from './weaponCatalog.js'
+export * from './passiveCatalog.js'
+export * from './upgrades.js'

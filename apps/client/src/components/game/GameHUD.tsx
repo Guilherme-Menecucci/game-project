@@ -17,10 +17,9 @@ import { HudTimer } from './HudTimer.js'
 import { HudXpBar } from './HudXpBar.js'
 import { HudKillCount } from './HudKillCount.js'
 import { LogoutButton } from '../auth/LogoutButton.js'
+import { WeaponSlotRow } from '../ui/WeaponSlotRow.js'
+import { getXpThresholdForLevel } from '@game/shared'
 import styles from './GameHUD.module.css'
-
-/** XP_LEVEL_THRESHOLD = 10 (from weapons.ts constants, plan 03-06) */
-const XP_LEVEL_THRESHOLD = 10
 
 interface GameHUDProps {
   room: Room
@@ -33,19 +32,37 @@ export function GameHUD({ room }: GameHUDProps) {
   const [level, setLevel] = useState<number>(1)
   const [elapsedMs, setElapsedMs] = useState<number>(0)
   const [kills, setKills] = useState<number>(0)
+  const [weapons, setWeapons] = useState<string[]>([])
+  const [passives, setPassives] = useState<string[]>([])
 
   // Subscribe to full state changes — fires at ~20Hz server tick rate
   useEffect(() => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const handler = (state: any) => {
       const myPlayer = (
-        state.players as Map<string, { hp: number; maxHp: number; xp: number; level: number }>
+        state.players as Map<
+          string,
+          {
+            hp: number
+            maxHp: number
+            xp: number
+            level: number
+            weapons: string[]
+            passives: string[]
+          }
+        >
       ).get(room.sessionId)
       if (myPlayer) {
         setHp(myPlayer.hp)
         setMaxHp(myPlayer.maxHp)
         setXp(myPlayer.xp)
         setLevel(myPlayer.level)
+        if (myPlayer.weapons) {
+          setWeapons(Array.from(myPlayer.weapons))
+        }
+        if (myPlayer.passives) {
+          setPassives(Array.from(myPlayer.passives))
+        }
       }
       setElapsedMs(state.elapsedMs as number)
     }
@@ -89,15 +106,20 @@ export function GameHUD({ room }: GameHUDProps) {
 
       {/* Top-right: XP cluster + LogoutButton */}
       <div className={styles.topRight}>
-        <HudXpBar xp={xp} threshold={XP_LEVEL_THRESHOLD} level={level} />
+        <HudXpBar xp={xp} threshold={getXpThresholdForLevel(level)} level={level} />
         <div className={styles.logoutWrapper}>
           <LogoutButton />
         </div>
       </div>
 
-      {/* Bottom-center: Kill count */}
-      <div className={styles.bottomCenter}>
+      {/* Bottom-left: Kill count */}
+      <div className={styles.bottomLeft}>
         <HudKillCount kills={kills} />
+      </div>
+
+      {/* Bottom-center: Weapon slots row */}
+      <div className={styles.bottomCenter}>
+        <WeaponSlotRow weapons={weapons} passives={passives} />
       </div>
     </div>
   )

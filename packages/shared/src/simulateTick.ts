@@ -26,6 +26,7 @@ import type {
   PlainEnemyState,
   PlainGemState,
   PlainProjectileState,
+  PlainPickupState,
 } from './state.js'
 import { PlayerInputSchema } from './schemas.js'
 import type { PlayerInput } from './schemas.js'
@@ -40,6 +41,7 @@ import {
   applyEnemyContactDamage,
   applyGemCollection,
   applyLevelUp,
+  applyPickupCollection,
 } from './weapons.js'
 
 export { WORLD_W, WORLD_H }
@@ -50,10 +52,10 @@ export const SPEED_SUBUNITS = 10_000
  * Deep-clone a PlainGameState without mutating the original.
  * Uses manual Map copying to handle the Map-based collections.
  */
-function cloneState(state: PlainGameState): PlainGameState {
+export function cloneState(state: PlainGameState): PlainGameState {
   const players = new Map<string, PlainPlayerState>()
   for (const [id, p] of state.players) {
-    players.set(id, { ...p })
+    players.set(id, { ...p, weapons: [...p.weapons], passives: [...p.passives] })
   }
   const enemies = new Map<string, PlainEnemyState>()
   for (const [id, e] of state.enemies) {
@@ -67,6 +69,10 @@ function cloneState(state: PlainGameState): PlainGameState {
   for (const [id, pr] of state.projectiles) {
     projectiles.set(id, { ...pr })
   }
+  const pickups = new Map<string, PlainPickupState>()
+  for (const [id, pk] of state.pickups) {
+    pickups.set(id, { ...pk })
+  }
   return {
     tick: state.tick,
     elapsedMs: state.elapsedMs,
@@ -74,6 +80,7 @@ function cloneState(state: PlainGameState): PlainGameState {
     enemies,
     gems,
     projectiles,
+    pickups,
     prngSeed: state.prngSeed,
   }
 }
@@ -124,8 +131,9 @@ export function simulateTick(
 
     // Normalize to integer sub-unit displacement
     const mag = Math.sqrt(dx * dx + dy * dy)
-    const vx = Math.round((dx * SPEED_SUBUNITS) / mag)
-    const vy = Math.round((dy * SPEED_SUBUNITS) / mag)
+    const speed = player.speed ?? SPEED_SUBUNITS
+    const vx = Math.round((dx * speed) / mag)
+    const vy = Math.round((dy * speed) / mag)
 
     // Apply toroidal wrap
     player.x = toroidal(player.x + vx, WORLD_W)
@@ -141,13 +149,13 @@ export function simulateTick(
   newState = spawnEnemies(newState, prng)
 
   // 6. Auto-fire player projectiles toward nearest enemy
-  newState = autoFire(newState, prng)
+  newState = autoFire(newState, inputs, prng)
 
   // 7. Move all projectiles
   newState = applyProjectileMovement(newState)
 
   // 8. Projectile collisions (player proj→enemy, enemy proj→player)
-  newState = applyCollisions(newState)
+  newState = applyCollisions(newState, prng)
 
   // 9. Enemy contact damage to players
   newState = applyEnemyContactDamage(newState)
@@ -155,7 +163,10 @@ export function simulateTick(
   // 10. Gem collection (attract + snap-collect)
   newState = applyGemCollection(newState)
 
-  // 11. Level-up check
+  // 11. Pickup collection (proximity collection)
+  newState = applyPickupCollection(newState)
+
+  // 12. Level-up check
   newState = applyLevelUp(newState)
 
   return newState

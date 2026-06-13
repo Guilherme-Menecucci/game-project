@@ -83,6 +83,41 @@ export class BootScene extends Phaser.Scene {
     atlas.draw(g)
     atlas.add('proj_enemy', 0, 130, 0, 8, 8)
 
+    // --- proj_magic_wand: orange-red circle r=4 at (142, 0), center=(146,4) ---
+    g.clear()
+    g.fillStyle(0xff6b00)
+    g.fillCircle(146, 4, 4)
+    atlas.draw(g)
+    atlas.add('proj_magic_wand', 0, 142, 0, 8, 8)
+
+    // --- proj_knife: gray circle r=4 at (154, 0), center=(158,4) ---
+    g.clear()
+    g.fillStyle(0x9ca3af)
+    g.fillCircle(158, 4, 4)
+    atlas.draw(g)
+    atlas.add('proj_knife', 0, 154, 0, 8, 8)
+
+    // --- proj_bible: brown circle r=4 at (166, 0), center=(170,4) ---
+    g.clear()
+    g.fillStyle(0x8b5a2b)
+    g.fillCircle(170, 4, 4)
+    atlas.draw(g)
+    atlas.add('proj_bible', 0, 166, 0, 8, 8)
+
+    // --- proj_holy_wand: golden yellow circle r=4 at (178, 0), center=(182,4) ---
+    g.clear()
+    g.fillStyle(0xfbbf24)
+    g.fillCircle(182, 4, 4)
+    atlas.draw(g)
+    atlas.add('proj_holy_wand', 0, 178, 0, 8, 8)
+
+    // --- proj_thousand_edge: cyan steel circle r=4 at (190, 0), center=(194,4) ---
+    g.clear()
+    g.fillStyle(0x38bdf8)
+    g.fillCircle(194, 4, 4)
+    atlas.draw(g)
+    atlas.add('proj_thousand_edge', 0, 190, 0, 8, 8)
+
     // Free the graphics object — all frames registered, no longer needed.
     g.destroy()
 

@@ -143,6 +143,24 @@ describe('SoloRoom anti-cheat validation (SC-4, TEST-05)', () => {
     await expect(connectPromise).rejects.toThrow()
   })
 
+  it('solo rooms are isolated — two players never share a room (maxClients=1)', async () => {
+    server.sdk.auth.token = signTestGameToken('player-one')
+    const r1 = await server.sdk.create('solo_room', {})
+
+    server.sdk.auth.token = signTestGameToken('player-two')
+    const r2 = await server.sdk.create('solo_room', {})
+
+    // Each create() yields a distinct room instance — no pooling into one run.
+    expect(r1.roomId).not.toBe(r2.roomId)
+
+    // A by-name join cannot enter an occupied solo room (no free seat to match into).
+    server.sdk.auth.token = signTestGameToken('intruder')
+    await expect(server.sdk.join('solo_room', {})).rejects.toThrow()
+
+    await r1.leave()
+    await r2.leave()
+  })
+
   it('onAuth rejects connection when game JWT is signed with wrong secret (T-3-03)', async () => {
     const room = await server.createRoom('solo_room', {})
 

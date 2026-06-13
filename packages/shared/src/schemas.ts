@@ -7,11 +7,15 @@ import * as z from 'zod'
 
 // Game input schemas (Phase 1)
 export const PlayerInputSchema = z.object({
+  // .finite() rejects NaN/±Infinity. Bare z.number() accepts Infinity, which
+  // flows into simulateTick normalization (vx = dx*speed/mag) → NaN → permanent
+  // NaN player position. msgpack preserves non-finite floats on the wire, so a
+  // malicious client can reach this path; reject it at the schema boundary.
   moveVector: z.object({
-    x: z.number(),
-    y: z.number(),
+    x: z.number().finite(),
+    y: z.number().finite(),
   }),
-  aimAngle: z.number(),
+  aimAngle: z.number().finite(),
   actionFlags: z.number().int(),
   // D-02: Anti-replay sequence number — monotone per client connection.
   // Optional in Phase 3 for backward compat; will be required in Phase 4.
@@ -42,3 +46,15 @@ export const GuestTokenResponseSchema = z.object({
   displayName: z.string(),
 })
 export type GuestTokenResponse = z.infer<typeof GuestTokenResponseSchema>
+
+// Phase 4 Schemas
+export const UpgradeSelectedSchema = z.object({
+  upgradeId: z.string(),
+})
+export type UpgradeSelected = z.infer<typeof UpgradeSelectedSchema>
+
+export const ReplaceSlotSchema = z.object({
+  slot: z.number().int().min(0).max(5),
+  upgradeId: z.string(),
+})
+export type ReplaceSlot = z.infer<typeof ReplaceSlotSchema>

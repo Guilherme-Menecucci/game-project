@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useRef, useState, useCallback } from 'react'
 import type { Room } from '@colyseus/sdk'
 import { Client } from '@colyseus/sdk'
 import { useAuth } from '../components/auth/AuthProvider.js'
@@ -7,9 +7,12 @@ import { PhaserGame } from '../components/game/PhaserGame.js'
 import type { GameOverData } from '../components/game/PhaserGame.js'
 import { GameHUD } from '../components/game/GameHUD.js'
 import { GameOverScreen } from '../components/game/GameOverScreen.js'
+import { UpgradePicker } from '../components/ui/UpgradePicker.js'
+import { SlotFullModal } from '../components/ui/SlotFullModal.js'
+import type { UpgradeOption } from '@game/shared'
 import styles from './GamePage.module.css'
 
-export type GamePhase = 'IDLE' | 'CONNECTING' | 'ACTIVE' | 'GAME-OVER'
+export type GamePhase = 'IDLE' | 'CONNECTING' | 'ACTIVE' | 'UPGRADING' | 'SLOT_FULL' | 'GAME-OVER'
 
 export type GameError =
   | 'SESSION_EXPIRED'
@@ -23,6 +26,11 @@ export function GamePage() {
   const [phase, setPhase] = useState<GamePhase>('IDLE')
   const [error, setError] = useState<GameError>(null)
   const roomRef = useRef<Room | null>(null)
+  const [pendingChoices, setPendingChoices] = useState<UpgradeOption[]>([])
+  const [slotFullPayload, setSlotFullPayload] = useState<{
+    weapons: string[]
+    upgradeId: string
+  } | null>(null)
 
   // Final stats captured from game-over event (populated on GAME-OVER transition)
   const [finalStats, setFinalStats] = useState<GameOverData>({
@@ -32,9 +40,14 @@ export function GamePage() {
     xp: 0,
   })
 
+  const [weapons, setWeapons] = useState<string[]>([])
+  const [passives, setPassives] = useState<string[]>([])
+
   async function handleSoloRun() {
     setPhase('CONNECTING')
     setError(null)
+    setWeapons([])
+    setPassives([])
 
     // Step 1: Fetch game token (session cookie required — D-05)
     let token: string
@@ -63,8 +76,49 @@ export function GamePage() {
     // Step 2: Connect to Colyseus solo_room via /colyseus proxy (D-10)
     try {
       const client = new Client('/colyseus')
-      const room = await client.joinOrCreate<unknown>('solo_room', { token })
+      // create() — never joinOrCreate(). SoloRoom.maxClients is 4, so
+      // joinOrCreate would drop a second player into another player's "solo" run.
+      // create() always spins up a fresh, unshared room instance per solo run.
+      const room = await client.create<unknown>('solo_room', { token })
       roomRef.current = room as Room
+
+      // Track weapons and passives
+      room.onStateChange(
+        (state: { players?: Map<string, { weapons?: string[]; passives?: string[] }> }) => {
+          const myPlayer = state.players?.get(room.sessionId)
+          if (myPlayer) {
+            if (myPlayer.weapons) {
+              setWeapons(Array.from(myPlayer.weapons))
+            }
+            if (myPlayer.passives) {
+              setPassives(Array.from(myPlayer.passives))
+            }
+          }
+        }
+      )
+
+      // Add progression listeners
+      room.onMessage('levelup', (data: { options: UpgradeOption[] }) => {
+        setPendingChoices(data.options)
+        setPhase('UPGRADING')
+      })
+
+      room.onMessage('slot_full', (data: { weapons: string[]; upgradeId: string }) => {
+        setSlotFullPayload(data)
+        setPhase('SLOT_FULL')
+      })
+
+      room.onMessage('rare_event', (data: { options: UpgradeOption[] }) => {
+        setPendingChoices(data.options)
+        setPhase('UPGRADING')
+      })
+
+      room.onMessage('upgrade_applied', () => {
+        setPhase('ACTIVE')
+        setPendingChoices([])
+        setSlotFullPayload(null)
+      })
+
       setPhase('ACTIVE')
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
@@ -84,17 +138,34 @@ export function GamePage() {
     }
   }
 
-  function handleGameOver(data: GameOverData) {
+  const handleUpgradeSelect = useCallback((upgradeId: string) => {
+    roomRef.current?.send('upgrade_selected', { upgradeId })
+    setPhase('ACTIVE')
+    setPendingChoices([])
+  }, [])
+
+  const handleReplace = useCallback(
+    (slot: number) => {
+      if (slotFullPayload) {
+        roomRef.current?.send('replace_slot', { slot, upgradeId: slotFullPayload.upgradeId })
+        setPhase('ACTIVE')
+        setSlotFullPayload(null)
+      }
+    },
+    [slotFullPayload]
+  )
+
+  const handleGameOver = useCallback((data: GameOverData) => {
     // ACTIVE → GAME-OVER: capture final stats, show GameOverScreen
     setFinalStats(data)
     setPhase('GAME-OVER')
-  }
+  }, [])
 
-  function handleRetry() {
+  const handleRetry = useCallback(() => {
     // GAME-OVER → IDLE: deliberate pause — player must click "Solo Run" again
     // This is a deliberate pause point giving breathing room before the next run.
     setPhase('IDLE')
-  }
+  }, [])
 
   return (
     <div className={styles.page}>
@@ -106,11 +177,27 @@ export function GamePage() {
           onSoloRun={() => void handleSoloRun()}
         />
       )}
-      {phase === 'ACTIVE' && roomRef.current && (
-        <>
-          <PhaserGame room={roomRef.current} onGameOver={handleGameOver} />
-          <GameHUD room={roomRef.current} />
-        </>
+      {(phase === 'ACTIVE' || phase === 'UPGRADING' || phase === 'SLOT_FULL') &&
+        roomRef.current && (
+          <>
+            <PhaserGame room={roomRef.current} onGameOver={handleGameOver} />
+            <GameHUD room={roomRef.current} />
+          </>
+        )}
+      {phase === 'UPGRADING' && (
+        <UpgradePicker
+          options={pendingChoices}
+          onSelect={handleUpgradeSelect}
+          weapons={weapons}
+          passives={passives}
+        />
+      )}
+      {phase === 'SLOT_FULL' && slotFullPayload && (
+        <SlotFullModal
+          weapons={slotFullPayload.weapons}
+          upgradeId={slotFullPayload.upgradeId}
+          onReplace={handleReplace}
+        />
       )}
       {phase === 'GAME-OVER' && (
         <GameOverScreen
@@ -119,6 +206,8 @@ export function GamePage() {
             kills: finalStats.killCount,
             level: finalStats.level,
             xp: finalStats.xp,
+            weapons: weapons,
+            passives: passives,
           }}
           onRetry={handleRetry}
         />

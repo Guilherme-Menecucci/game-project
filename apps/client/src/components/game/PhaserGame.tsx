@@ -10,6 +10,8 @@ export interface GameOverData {
   elapsedMs: number
   level: number
   xp: number
+  weapons?: string[]
+  passives?: string[]
 }
 
 interface PhaserGameProps {
@@ -19,6 +21,12 @@ interface PhaserGameProps {
 
 export function PhaserGame({ room, onGameOver }: PhaserGameProps) {
   const containerRef = useRef<HTMLDivElement>(null)
+  const onGameOverRef = useRef(onGameOver)
+
+  // Keep callback ref fresh without triggering effects
+  useEffect(() => {
+    onGameOverRef.current = onGameOver
+  }, [onGameOver])
 
   useEffect(() => {
     if (!containerRef.current) return
@@ -26,10 +34,9 @@ export function PhaserGame({ room, onGameOver }: PhaserGameProps) {
     // Store refs so cleanup closure captures them (not the reactive values)
     const container = containerRef.current
     const _room = room
-    const _onGameOver = onGameOver
 
     const config: Phaser.Types.Core.GameConfig = {
-      type: Phaser.AUTO,
+      type: Phaser.CANVAS,
       width: window.innerWidth,
       height: window.innerHeight,
       backgroundColor: '#1e2030', // arena ground color — UI-SPEC Game Canvas Palette
@@ -48,7 +55,7 @@ export function PhaserGame({ room, onGameOver }: PhaserGameProps) {
 
     // Listen for game-over event emitted by GameScene when player hp <= 0 or room leaves.
     game.events.on('gameover', (data: GameOverData) => {
-      _onGameOver(data)
+      onGameOverRef.current(data)
     })
 
     // CRITICAL: game.destroy(true) removes the canvas from the DOM.
@@ -56,7 +63,7 @@ export function PhaserGame({ room, onGameOver }: PhaserGameProps) {
     return () => {
       game.destroy(true)
     }
-  }, [room, onGameOver])
+  }, [room])
 
   return <div ref={containerRef} className={styles.canvas} style={{ zIndex: 0 }} />
 }

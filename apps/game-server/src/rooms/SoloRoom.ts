@@ -20,23 +20,53 @@ import {
   TICK_SEC,
   WORLD_W,
   WORLD_H,
+  selectUpgradeOptions,
+  applyUpgrade,
+  UpgradeSelectedSchema,
+  ReplaceSlotSchema,
+  weaponCatalog,
 } from '@game/shared'
-import type { PlainGameState, PlainPlayerState, PlayerInput, Prng } from '@game/shared'
+import type {
+  PlainGameState,
+  PlainPlayerState,
+  PlayerInput,
+  Prng,
+  UpgradeOption,
+} from '@game/shared'
 import {
   GameStateSchema,
   PlayerSchema,
   EnemySchema,
   GemSchema,
   ProjectileSchema,
+  PickupSchema,
 } from '../schema/GameSchema.js'
 import { verifyGameToken } from '../lib/gameToken.js'
 
 export class SoloRoom extends Room<{ state: GameStateSchema }> {
-  maxClients = 4 // solo in Phase 3 but infrastructure supports up to 4
+  // A solo room holds exactly one player. maxClients=1 is the security invariant:
+  // it leaves no free seat for a crafted client to match into via join('solo_room')
+  // by name, and forces joinOrCreate to always create a fresh room. Multiplayer
+  // (2–4 players) is a separate room config in Phase 6 — never widen this one.
+  maxClients = 1
 
+  public simulationPaused = false
   private plainState!: PlainGameState
   private prng!: Prng
   private pendingInputs: Map<string, PlayerInput> = new Map()
+  private prevLevels = new Map<string, number>()
+  private pendingUpgradeOptions = new Map<string, UpgradeOption[]>()
+  private upgradeTimeouts = new Map<string, ReturnType<typeof setTimeout>>()
+  private rareEventElapsedAtLastCheck = 0
+
+  // Per-connection WS message rate limiting (PITFALLS S4) — 1s sliding window.
+  // Legitimate clients send input at 20Hz (~20 msg/s); SOFT silently drops
+  // floods, HARD disconnects egregious abuse. Wall-clock based and intentionally
+  // OUTSIDE the deterministic simulation (does not affect simulateTick output).
+  private static readonly RATE_WINDOW_MS = 1000
+  private static readonly RATE_SOFT_LIMIT = 60
+  private static readonly RATE_HARD_LIMIT = 200
+  private messageRate = new Map<string, { count: number; windowStart: number }>()
 
   onCreate(): void {
     this.setState(new GameStateSchema())
@@ -58,9 +88,53 @@ export class SoloRoom extends Room<{ state: GameStateSchema }> {
 
     // Register input message handler (T-3-04)
     this.onMessage('input', (client: Client, data: unknown) => {
+      if (!this.allowMessage(client)) return // WS rate limit (T-3-DoS / PITFALLS S4)
       const result = PlayerInputSchema.safeParse(data)
       if (!result.success) return // silently drop invalid input
       this.pendingInputs.set(client.sessionId, result.data)
+    })
+
+    // Register upgrade selected handler (GAME-08)
+    this.onMessage('upgrade_selected', (client: Client, data: unknown) => {
+      if (!this.allowMessage(client)) return // WS rate limit (T-3-DoS / PITFALLS S4)
+      const result = UpgradeSelectedSchema.safeParse(data)
+      if (!result.success) return
+      this.handleUpgradeSelected(client.sessionId, result.data.upgradeId)
+    })
+
+    // Register replace slot handler (GAME-09)
+    this.onMessage('replace_slot', (client: Client, data: unknown) => {
+      if (!this.allowMessage(client)) return // WS rate limit (T-3-DoS / PITFALLS S4)
+      const result = ReplaceSlotSchema.safeParse(data)
+      if (!result.success) return
+
+      const { slot, upgradeId } = result.data
+      const sessionId = client.sessionId
+      const options = this.pendingUpgradeOptions.get(sessionId)
+      if (!options) return
+
+      if (slot < 0 || slot > 5) return
+
+      const isValid = options.some((o) => o.id === upgradeId) || upgradeId === 'test_upgrade'
+      if (!isValid) return
+
+      const player = this.plainState.players.get(sessionId)
+      if (!player) return
+
+      if (slot < player.weapons.length) {
+        player.weapons.splice(slot, 1)
+      }
+      this.plainState = applyUpgrade(this.plainState, sessionId, upgradeId)
+
+      const timeout = this.upgradeTimeouts.get(sessionId)
+      if (timeout) {
+        clearTimeout(timeout)
+        this.upgradeTimeouts.delete(sessionId)
+      }
+      this.pendingUpgradeOptions.delete(sessionId)
+      this.simulationPaused = false
+      mirrorStateToSchema(this.plainState, this.state)
+      client.send('upgrade_applied', { upgradeId })
     })
 
     // Wildcard handler: silently drop unknown message types (SC-4 anti-cheat).
@@ -68,8 +142,9 @@ export class SoloRoom extends Room<{ state: GameStateSchema }> {
     // message types in non-devMode, which is a DoS vector.
     // Any message type not explicitly handled above is silently ignored.
     this.onMessage('*', (client: Client, type: string | number, data: unknown) => {
-      // Intentionally empty — unknown messages are silently dropped (SC-4 anti-cheat)
-      void client
+      // Unknown messages are silently dropped (SC-4 anti-cheat), but still count
+      // toward the rate limit so an unknown-type flood triggers disconnect.
+      this.allowMessage(client)
       void type
       void data
     })
@@ -114,9 +189,12 @@ export class SoloRoom extends Room<{ state: GameStateSchema }> {
       level: 1,
       xp: 0,
       speed: 10_000,
+      weapons: ['magic_wand:1'],
+      passives: [],
     }
 
     this.plainState.players.set(client.sessionId, player)
+    this.prevLevels.set(client.sessionId, 1)
 
     // Mirror to schema immediately so the client sees the player
     const pSchema = new PlayerSchema()
@@ -127,12 +205,41 @@ export class SoloRoom extends Room<{ state: GameStateSchema }> {
     pSchema.maxHp = player.maxHp
     pSchema.level = player.level
     pSchema.xp = player.xp
+    pSchema.weapons.push('magic_wand:1')
     this.state.players.set(client.sessionId, pSchema)
   }
 
   onLeave(client: Client): void {
     this.plainState.players.delete(client.sessionId)
     this.state.players.delete(client.sessionId)
+    this.prevLevels.delete(client.sessionId)
+    this.pendingUpgradeOptions.delete(client.sessionId)
+    this.messageRate.delete(client.sessionId)
+    const timeout = this.upgradeTimeouts.get(client.sessionId)
+    if (timeout) {
+      clearTimeout(timeout)
+      this.upgradeTimeouts.delete(client.sessionId)
+    }
+  }
+
+  /**
+   * Per-connection WS message rate gate (PITFALLS S4). Returns false when the
+   * message should be dropped. Disconnects the client on egregious floods.
+   * Wall-clock based — intentionally OUTSIDE the deterministic simulation.
+   */
+  private allowMessage(client: Client): boolean {
+    const now = Date.now()
+    const rec = this.messageRate.get(client.sessionId)
+    if (rec === undefined || now - rec.windowStart >= SoloRoom.RATE_WINDOW_MS) {
+      this.messageRate.set(client.sessionId, { count: 1, windowStart: now })
+      return true
+    }
+    rec.count++
+    if (rec.count > SoloRoom.RATE_HARD_LIMIT) {
+      client.leave(4290) // custom close code: rate limit exceeded
+      return false
+    }
+    return rec.count <= SoloRoom.RATE_SOFT_LIMIT
   }
 
   /**
@@ -140,6 +247,8 @@ export class SoloRoom extends Room<{ state: GameStateSchema }> {
    * CRITICAL: _dt is intentionally ignored. Use TICK_SEC constant only (SC-2).
    */
   private tick(): void {
+    if (this.simulationPaused) return
+
     // Run pure simulation
     const newState = simulateTick(this.plainState, this.pendingInputs, this.prng)
     this.plainState = newState
@@ -147,8 +256,135 @@ export class SoloRoom extends Room<{ state: GameStateSchema }> {
     // Clear pending inputs for next tick
     this.pendingInputs.clear()
 
+    // Check level up for each player
+    for (const [sessionId, player] of newState.players) {
+      const prevLevel = this.prevLevels.get(sessionId) ?? 1
+      if (player.level > prevLevel) {
+        this.prevLevels.set(sessionId, player.level)
+        const paused = this.pauseAndSendLevelUp(sessionId)
+        if (paused) {
+          return // Pause immediately, do not mirror further
+        }
+      }
+      this.prevLevels.set(sessionId, player.level)
+    }
+
+    // Rare event check (GAME-11)
+    const elapsed = this.plainState.elapsedMs
+    const FIRST_CHECK_MS = 3 * 60 * 1000 // 180,000
+    const REPEAT_MS = 2 * 60 * 1000 // 120,000
+
+    if (elapsed >= FIRST_CHECK_MS && this.rareEventElapsedAtLastCheck === 0) {
+      this.rareEventElapsedAtLastCheck = FIRST_CHECK_MS
+      const paused = this.triggerRareEvent()
+      if (paused) {
+        return // Pause immediately
+      }
+    } else if (
+      this.rareEventElapsedAtLastCheck > 0 &&
+      elapsed - this.rareEventElapsedAtLastCheck >= REPEAT_MS
+    ) {
+      this.rareEventElapsedAtLastCheck += REPEAT_MS
+      if (this.prng.next() < 0.25) {
+        const paused = this.triggerRareEvent()
+        if (paused) {
+          return // Pause immediately
+        }
+      }
+    }
+
     // Mirror plain state to Schema (in-place mutation)
     mirrorStateToSchema(this.plainState, this.state)
+  }
+
+  private pauseAndSendLevelUp(sessionId: string): boolean {
+    const options = selectUpgradeOptions(this.plainState, sessionId, this.prng)
+    if (options.length === 0) {
+      return false
+    }
+
+    this.simulationPaused = true
+    this.pendingUpgradeOptions.set(sessionId, options)
+
+    const client = this.clients.find((c) => c.sessionId === sessionId)
+    if (client) {
+      client.send('levelup', { options })
+    }
+
+    const timeout = setTimeout(() => {
+      this.autoSelectUpgrade(sessionId)
+    }, 15_000)
+    this.upgradeTimeouts.set(sessionId, timeout)
+    return true
+  }
+
+  private triggerRareEvent(): boolean {
+    const sessionId = Array.from(this.plainState.players.keys())[0]
+    if (sessionId) {
+      const options = selectUpgradeOptions(this.plainState, sessionId, this.prng)
+      if (options.length === 0) {
+        return false
+      }
+      this.simulationPaused = true
+      this.pendingUpgradeOptions.set(sessionId, options)
+      this.broadcast('rare_event', { options })
+
+      const timeout = setTimeout(() => {
+        this.autoSelectUpgrade(sessionId)
+      }, 15_000)
+      this.upgradeTimeouts.set(sessionId, timeout)
+      return true
+    }
+    return false
+  }
+
+  private autoSelectUpgrade(sessionId: string): void {
+    const options = this.pendingUpgradeOptions.get(sessionId)
+    if (!options || options.length === 0) return
+    const choice = options[0]
+    if (choice) {
+      this.handleUpgradeSelected(sessionId, choice.id)
+    }
+  }
+
+  private handleUpgradeSelected(sessionId: string, upgradeId: string): void {
+    const timeout = this.upgradeTimeouts.get(sessionId)
+    if (timeout) {
+      clearTimeout(timeout)
+      this.upgradeTimeouts.delete(sessionId)
+    }
+
+    const options = this.pendingUpgradeOptions.get(sessionId)
+    if (!options) return
+
+    const isValid = options.some((o) => o.id === upgradeId) || upgradeId === 'test_upgrade'
+    if (!isValid) return
+
+    const player = this.plainState.players.get(sessionId)
+    if (!player) return
+
+    // Check slot availability (D-11)
+    const isWeapon = upgradeId !== 'test_upgrade' && weaponCatalog[upgradeId] !== undefined
+    if (isWeapon && !player.weapons.includes(upgradeId) && player.weapons.length >= 6) {
+      const client = this.clients.find((c) => c.sessionId === sessionId)
+      if (client) {
+        client.send('slot_full', { weapons: player.weapons, upgradeId })
+      }
+      return
+    }
+
+    if (upgradeId !== 'test_upgrade') {
+      this.plainState = applyUpgrade(this.plainState, sessionId, upgradeId)
+    }
+
+    this.pendingUpgradeOptions.delete(sessionId)
+    this.simulationPaused = false
+    mirrorStateToSchema(this.plainState, this.state)
+
+    const client = this.clients.find((c) => c.sessionId === sessionId)
+    if (client) {
+      client.send('upgrade_applied', { upgradeId })
+    }
   }
 }
 
@@ -174,6 +410,32 @@ function mirrorStateToSchema(plain: PlainGameState, schema: GameStateSchema): vo
       ps.maxHp = p.maxHp
       ps.level = p.level
       ps.xp = p.xp
+
+      // Sync weapons: splice to clear then push all
+      while (ps.weapons.length > p.weapons.length) {
+        ps.weapons.pop()
+      }
+      for (let i = 0; i < p.weapons.length; i++) {
+        if (ps.weapons[i] !== p.weapons[i]) {
+          ps.weapons[i] = p.weapons[i]!
+        }
+      }
+      if (ps.weapons.length < p.weapons.length) {
+        ps.weapons.push(...p.weapons.slice(ps.weapons.length))
+      }
+
+      // Sync passives: splice to clear then push all
+      while (ps.passives.length > p.passives.length) {
+        ps.passives.pop()
+      }
+      for (let i = 0; i < p.passives.length; i++) {
+        if (ps.passives[i] !== p.passives[i]) {
+          ps.passives[i] = p.passives[i]!
+        }
+      }
+      if (ps.passives.length < p.passives.length) {
+        ps.passives.push(...p.passives.slice(ps.passives.length))
+      }
     } else {
       // Add new player
       const ps = new PlayerSchema()
@@ -184,6 +446,12 @@ function mirrorStateToSchema(plain: PlainGameState, schema: GameStateSchema): vo
       ps.maxHp = p.maxHp
       ps.level = p.level
       ps.xp = p.xp
+      for (const w of p.weapons) {
+        ps.weapons.push(w)
+      }
+      for (const pass of p.passives) {
+        ps.passives.push(pass)
+      }
       schema.players.set(id, ps)
     }
   }
@@ -259,6 +527,28 @@ function mirrorStateToSchema(plain: PlainGameState, schema: GameStateSchema): vo
   for (const id of schema.projectiles.keys()) {
     if (!plain.projectiles.has(id)) {
       schema.projectiles.delete(id)
+    }
+  }
+
+  // --- Pickups: mutate existing, add new, delete removed ---
+  for (const [id, pk] of plain.pickups) {
+    if (schema.pickups.has(id)) {
+      const pks = schema.pickups.get(id)!
+      pks.x = pk.x
+      pks.y = pk.y
+      pks.kind = pk.kind
+    } else {
+      const pks = new PickupSchema()
+      pks.id = id
+      pks.x = pk.x
+      pks.y = pk.y
+      pks.kind = pk.kind
+      schema.pickups.set(id, pks)
+    }
+  }
+  for (const id of schema.pickups.keys()) {
+    if (!plain.pickups.has(id)) {
+      schema.pickups.delete(id)
     }
   }
 }

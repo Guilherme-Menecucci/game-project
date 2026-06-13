@@ -43,7 +43,15 @@
   pointer-events: auto;
 }
 
-/* Bottom-center: Kill count */
+/* Bottom-left: Kill count */
+.bottomLeft {
+  position: absolute;
+  bottom: var(--space-md);
+  left: var(--space-md);
+  pointer-events: none;
+}
+
+/* Bottom-center: Weapon slots row */
 .bottomCenter {
   position: absolute;
   bottom: var(--space-md);

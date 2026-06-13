@@ -19,6 +19,7 @@ import {
   XP_LEVEL_THRESHOLD,
   GEM_COLLECT_SNAP,
   KEEP_DISTANCE_INNER,
+  getXpThresholdForLevel,
 } from '@game/shared'
 import type { PlainEnemyState, PlainGameState, PlainProjectileState } from '@game/shared'
 
@@ -97,6 +98,7 @@ describe('simulateTick weapons (GAME-03, GAME-05, GAME-06, GAME-07)', () => {
     const playerX = 2_000_000
     const playerY = 2_000_000
     setPlayer(state, playerX, playerY)
+    state.players.get('p1')!.weapons = ['magic_wand:3']
 
     // Enemy 100 game units east of player
     const enemyX = playerX + 100_000
@@ -385,5 +387,49 @@ describe('simulateTick weapons (GAME-03, GAME-05, GAME-06, GAME-07)', () => {
     // Enemy projectile should be removed after hit
     const hasEnemyProjectile = [...nextState.projectiles.values()].some((p) => p.isEnemy === true)
     expect(hasEnemyProjectile).toBe(false)
+  })
+
+  /**
+   * Test 11: getXpThresholdForLevel progressive scaling multipliers
+   */
+  it('getXpThresholdForLevel scales thresholds progressively', () => {
+    // Level 1: 1x (base 10)
+    expect(getXpThresholdForLevel(1)).toBe(10)
+    // Level 2: 1.002x
+    expect(getXpThresholdForLevel(2)).toBe(10) // 10 * 1.002 = 10.02 -> 10
+    // Level 3: 1.005x
+    expect(getXpThresholdForLevel(3)).toBe(10) // 10 * 1.005 = 10.05 -> 10
+    // Higher levels should be progressively larger
+    expect(getXpThresholdForLevel(100)).toBeGreaterThan(10)
+    expect(getXpThresholdForLevel(255)).toBeGreaterThan(getXpThresholdForLevel(100))
+  })
+
+  /**
+   * Test 12: Player level does not wrap around at 255
+   */
+  it('player level transitions past 255 without wrapping to 0', () => {
+    const state = makeInitialState(1)
+    const playerX = 2_000_000
+    const playerY = 2_000_000
+    setPlayer(state, playerX, playerY)
+
+    const [playerId] = [...state.players.keys()]
+    const player = state.players.get(playerId)!
+    player.level = 255
+
+    const threshold = getXpThresholdForLevel(255)
+    player.xp = threshold - 1
+
+    // Place gem within snap radius with value=2 to trigger level up to 256
+    const gemX = playerX + GEM_COLLECT_SNAP - 1_000
+    state.gems.set('gem1', { id: 'gem1', x: gemX, y: playerY, value: 2 })
+
+    const inputs = new Map()
+    const prng = mulberry32(1)
+    const nextState = simulateTick(state, inputs, prng)
+
+    const nextPlayer = nextState.players.get(playerId)!
+    expect(nextPlayer.level).toBe(256)
+    expect(nextPlayer.xp).toBe(1)
   })
 })

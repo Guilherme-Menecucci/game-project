@@ -10,7 +10,7 @@
  *
  * CRITICAL: NEVER call Math.random() — use the prng parameter only.
  */
-import type { PlainGameState, PlainEnemyState } from './state.js'
+import type { PlainGameState, PlainEnemyState, PlainPickupState } from './state.js'
 import type { Prng } from './prng.js'
 import { WORLD_W, WORLD_H } from './spatialGrid.js'
 
@@ -146,4 +146,60 @@ export function spawnEnemies(state: PlainGameState, prng: Prng): PlainGameState 
     ...state,
     enemies: newEnemies,
   }
+}
+
+/**
+ * rollPickupDrop — rolls a random pickup drop when an enemy dies.
+ * Deterministic PRNG draw order: drop check -> kind select -> id generation.
+ */
+export function rollPickupDrop(
+  enemyArchetype: 'swarmer' | 'tank' | 'ranged',
+  xOrPrng: number | Prng,
+  y?: number,
+  prng?: Prng
+): PlainPickupState | null {
+  let activePrng: Prng
+  let activeX = 0
+  let activeY = 0
+
+  if (typeof xOrPrng === 'number') {
+    activeX = xOrPrng
+    activeY = y ?? 0
+    activePrng = prng!
+  } else {
+    activePrng = xOrPrng
+  }
+
+  const roll = activePrng.next()
+  let threshold = 0
+
+  switch (enemyArchetype) {
+    case 'swarmer':
+      threshold = 0.02
+      break
+    case 'tank':
+      threshold = 0.08
+      break
+    case 'ranged':
+      threshold = 0.05
+      break
+  }
+
+  if (roll < threshold) {
+    const kindRoll = activePrng.next()
+    let kind: 'health_orb' | 'xp_magnet' | 'screen_bomb'
+    if (kindRoll < 0.333) {
+      kind = 'health_orb'
+    } else if (kindRoll < 0.667) {
+      kind = 'xp_magnet'
+    } else {
+      kind = 'screen_bomb'
+    }
+
+    const prngDraw = activePrng.next()
+    const id = `pk-${activeX}-${activeY}-${prngDraw.toString(36).slice(2)}`
+    return { id, x: activeX, y: activeY, kind }
+  }
+
+  return null
 }

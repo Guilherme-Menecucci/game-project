@@ -15,12 +15,25 @@ describe('simulateTick determinism (SC-2)', () => {
   it('is deterministic: byte-identical output for same seed', () => {
     const state1 = makeInitialState(12345)
     const state2 = makeInitialState(12345)
+
+    // Add weapons/passives to player state and a pickup to initial state
+    for (const state of [state1, state2]) {
+      const p = state.players.get('p1')!
+      p.weapons = ['magic_wand']
+      p.passives = []
+      state.pickups.set('p-0', { id: 'p-0', x: 100, y: 100, kind: 'health_orb' })
+    }
+
     const inputs = new Map()
 
     const result1 = simulateTick(state1, inputs, mulberry32(12345))
     const result2 = simulateTick(state2, inputs, mulberry32(12345))
 
     expect(JSON.stringify(result1)).toBe(JSON.stringify(result2))
+
+    // Verify pickups Map cloning correctness
+    expect(result1.pickups.size).toBe(1)
+    expect(result1.pickups.get('p-0')).toEqual({ id: 'p-0', x: 100, y: 100, kind: 'health_orb' })
   })
 
   it('does not mutate input state', () => {
