@@ -44,7 +44,11 @@ import {
 import { verifyGameToken } from '../lib/gameToken.js'
 
 export class SoloRoom extends Room<{ state: GameStateSchema }> {
-  maxClients = 4 // solo in Phase 3 but infrastructure supports up to 4
+  // A solo room holds exactly one player. maxClients=1 is the security invariant:
+  // it leaves no free seat for a crafted client to match into via join('solo_room')
+  // by name, and forces joinOrCreate to always create a fresh room. Multiplayer
+  // (2–4 players) is a separate room config in Phase 6 — never widen this one.
+  maxClients = 1
 
   public simulationPaused = false
   private plainState!: PlainGameState
