@@ -76,7 +76,10 @@ export function GamePage() {
     // Step 2: Connect to Colyseus solo_room via /colyseus proxy (D-10)
     try {
       const client = new Client('/colyseus')
-      const room = await client.joinOrCreate<unknown>('solo_room', { token })
+      // create() — never joinOrCreate(). SoloRoom.maxClients is 4, so
+      // joinOrCreate would drop a second player into another player's "solo" run.
+      // create() always spins up a fresh, unshared room instance per solo run.
+      const room = await client.create<unknown>('solo_room', { token })
       roomRef.current = room as Room
 
       // Track weapons and passives
