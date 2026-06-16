@@ -15,6 +15,9 @@ export interface BossCatalogEntry {
   displayName: string
   baseHp: number
   baseSpeed: number
+  // Phase 5: damage dealt to players in ENEMY_CONTACT_RADIUS on the 'attacking'
+  // transition of the D-19 telegraph state machine (applyBossAI in weapons.ts).
+  contactDamage: number
   description: string
 }
 
@@ -26,6 +29,7 @@ export const bossCatalog: Record<string, BossCatalogEntry> = {
     displayName: 'Patient Zero',
     baseHp: 3000,
     baseSpeed: 6000,
+    contactDamage: 10,
     description: 'The biome boss — a large, lumbering humanoid that telegraphs heavy attacks.',
   },
   unfinished_one: {
@@ -35,6 +39,7 @@ export const bossCatalog: Record<string, BossCatalogEntry> = {
     displayName: 'The Unfinished One',
     baseHp: 8000,
     baseSpeed: 5000,
+    contactDamage: 15,
     description: 'The final boss — a massive, blocky horror that caps the 30-minute run.',
   },
 }

@@ -86,6 +86,10 @@ export type PlainProjectileState = {
   isEnemy: boolean
   damage: number
   lifetime: number
+  // Phase 5: slot index (string) into owner's player.weapons array for the
+  // weapon that created this projectile. Used by applyCollisions to accumulate
+  // damage into player.weaponStats[weaponSlot] (D-21 / GAME-16).
+  weaponSlot?: string
 }
 
 export type PlainGameState = {
