@@ -119,7 +119,14 @@ export class SoloRoom extends Room<{ state: GameStateSchema }> {
 
       if (slot < 0 || slot > 5) return
 
-      const isValid = options.some((o) => o.id === upgradeId) || upgradeId === 'test_upgrade'
+      // Only weapon-kind upgrades may replace a weapon slot (WR-01 security fix).
+      // Passives and evolutions offered this level-up must not corrupt the weapons array.
+      const selectedOption = options.find((o) => o.id === upgradeId)
+      if (!selectedOption || selectedOption.kind !== 'weapon') {
+        // test_upgrade bypass handled separately in WR-06 guard below
+        if (upgradeId !== 'test_upgrade') return
+      }
+      const isValid = !!selectedOption || upgradeId === 'test_upgrade'
       if (!isValid) return
 
       const player = this.plainState.players.get(sessionId)
