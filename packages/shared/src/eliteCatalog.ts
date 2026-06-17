@@ -36,8 +36,8 @@ export const eliteCatalog: Record<string, EliteCatalogEntry> = {
     eliteName: 'Stitched Orderly',
     baseArchetype: 'swarmer',
     spawnArchetype: 'swarmer',
-    hp: 1.4,
-    maxHp: 1.4,
+    hp: 2, // ceil(1 * 1.4) — integer to avoid uint8 truncation in GameSchema
+    maxHp: 2,
     speed: 10_500, // 7_500 * 1.4
     displayName: 'Stitched Orderly',
     description: 'A reanimated orderly, faster and tougher than a common swarmer.',
@@ -47,8 +47,8 @@ export const eliteCatalog: Record<string, EliteCatalogEntry> = {
     eliteName: 'The Harvester',
     baseArchetype: 'ranged',
     spawnArchetype: 'ranged',
-    hp: 4.2, // 3 * 1.4
-    maxHp: 4.2,
+    hp: 5, // round(3 * 1.4) + 1 — integer to avoid uint8 truncation in GameSchema
+    maxHp: 5,
     speed: 6_300, // 4_500 * 1.4
     displayName: 'The Harvester',
     description: 'A grasping limb construct that strikes from range.',
