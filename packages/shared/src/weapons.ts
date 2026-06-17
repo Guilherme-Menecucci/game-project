@@ -256,11 +256,12 @@ export function autoFire(
         const garlicRadius = 60_000 * rMult
         const garlicRadiusSq = garlicRadius * garlicRadius
 
-        // Re-fetch player after possible weaponStats update above
-        const garlicPlayer = newPlayers.get(playerId) ?? player
-        const garlicStats = garlicPlayer.weaponStats ?? {}
-
         for (const [enemyId, enemy] of newEnemies) {
+          // Re-read from newPlayers each iteration so weaponStats accumulate correctly
+          // without mutating the input state (WR-05: removes Object.assign on live reference).
+          const garlicPlayer = newPlayers.get(playerId) ?? player
+          const garlicStats = garlicPlayer.weaponStats ?? {}
+
           const distSq = toroidalDistSq(garlicPlayer.x, garlicPlayer.y, enemy.x, enemy.y)
           if (distSq <= garlicRadiusSq) {
             // Clamp damage to remaining hp (no overkill counted — D-21 "damage dealt" semantics)
@@ -278,8 +279,6 @@ export function autoFire(
             }
             const updatedWeaponStats = { ...garlicStats, [slotIndex]: updatedSlotStat }
             newPlayers.set(playerId, { ...garlicPlayer, weaponStats: updatedWeaponStats })
-            // Keep local reference in sync
-            Object.assign(garlicStats, updatedWeaponStats)
 
             if (updatedHp <= 0) {
               newEnemies.delete(enemyId)
