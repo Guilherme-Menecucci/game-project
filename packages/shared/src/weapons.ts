@@ -1026,6 +1026,7 @@ export function applyPickupCollection(state: PlainGameState): PlainGameState {
   const newGems = new Map(state.gems)
   const newEnemies = new Map(state.enemies)
   let changed = false
+  let killsDelta = 0
 
   const radiusSq = PICKUP_COLLECT_RADIUS * PICKUP_COLLECT_RADIUS
 
@@ -1045,6 +1046,7 @@ export function applyPickupCollection(state: PlainGameState): PlainGameState {
             newGems.set(gemId, { ...gem, x: updatedPlayer.x, y: updatedPlayer.y })
           }
         } else if (pickup.kind === 'screen_bomb') {
+          killsDelta += newEnemies.size
           newEnemies.clear()
         }
 
@@ -1062,5 +1064,6 @@ export function applyPickupCollection(state: PlainGameState): PlainGameState {
     players: newPlayers,
     gems: newGems,
     enemies: newEnemies,
+    kills: (state.kills ?? 0) + killsDelta,
   }
 }
