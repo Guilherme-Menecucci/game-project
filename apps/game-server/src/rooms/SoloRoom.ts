@@ -211,10 +211,11 @@ export class SoloRoom extends Room<{ state: GameStateSchema }> {
     const centerY = Math.floor(WORLD_H / 2)
 
     // Validate join options via CharacterSelectSchema (T-05-11).
-    // Any missing/invalid classId or weaponId falls back to human/magic_wand.
-    const parseResult = CharacterSelectSchema.safeParse(options ?? {})
-    const classId = parseResult.success ? parseResult.data.classId : 'human'
-    const weaponId = parseResult.success ? parseResult.data.weaponId : 'magic_wand'
+    // Parse each field independently so an invalid weaponId doesn't discard a valid classId.
+    const classResult = CharacterSelectSchema.shape.classId.safeParse(options?.classId)
+    const weaponResult = CharacterSelectSchema.shape.weaponId.safeParse(options?.weaponId)
+    const classId = classResult.success ? classResult.data : 'human'
+    const weaponId = weaponResult.success ? weaponResult.data : 'magic_wand'
 
     const catalogEntry = characterCatalog[classId]!
 
