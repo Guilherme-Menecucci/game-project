@@ -169,9 +169,15 @@ export function applyUpgrade(
     const weaponIdx = player.weapons.findIndex((w) => w.startsWith(evo.requires.weapon))
     const passiveIdx = player.passives.findIndex((p) => p.startsWith(evo.requires.passive))
     if (weaponIdx !== -1 && passiveIdx !== -1) {
-      player.weapons.splice(weaponIdx, 1)
+      // Replace base weapon in-place at the same slot index (D-12/D-21). This
+      // preserves weaponStats[String(weaponIdx)] so DPS attribution from the base
+      // weapon automatically continues to apply to the evolved weapon (no key
+      // remapping needed). If no weaponStats entry exists for this slot yet,
+      // leave it absent — D-21 treats a missing entry as "no data yet".
+      player.weapons[weaponIdx] = upgradeId
+      // Remove the prerequisite passive (the weapon replaces in-place; only
+      // the passive must be spliced out to free a passive slot).
       player.passives.splice(passiveIdx, 1)
-      player.weapons.push(upgradeId)
     }
     return nextState
   }
@@ -181,10 +187,20 @@ export function applyUpgrade(
   if (weaponCatalog[wId]) {
     const idx = player.weapons.findIndex((w) => w.startsWith(wId))
     if (idx !== -1) {
+      // Level-up: replace weapon in-place. weaponStats[String(idx)] is
+      // intentionally left untouched — slot index is stable, existing
+      // totalDamage and acquiredAtMs remain valid (D-21 slot-index contract).
       player.weapons[idx] = upgradeId
     } else {
       if (player.weapons.length < 6) {
+        // New weapon acquisition: push into the next available slot and
+        // initialize a fresh weaponStats entry. acquiredAtMs is stamped to
+        // the current tick's elapsedMs so DPS computation has accurate elapsed
+        // time from the moment the weapon first became active (D-21).
         player.weapons.push(upgradeId)
+        const newIndex = player.weapons.length - 1
+        if (!player.weaponStats) player.weaponStats = {}
+        player.weaponStats[String(newIndex)] = { totalDamage: 0, acquiredAtMs: nextState.elapsedMs }
       }
     }
     return nextState
