@@ -25,6 +25,8 @@ import {
   UpgradeSelectedSchema,
   ReplaceSlotSchema,
   weaponCatalog,
+  characterCatalog,
+  CharacterSelectSchema,
 } from '@game/shared'
 import type {
   PlainGameState,
@@ -40,6 +42,7 @@ import {
   GemSchema,
   ProjectileSchema,
   PickupSchema,
+  WeaponStatsSchema,
 } from '../schema/GameSchema.js'
 import { verifyGameToken } from '../lib/gameToken.js'
 
@@ -122,9 +125,35 @@ export class SoloRoom extends Room<{ state: GameStateSchema }> {
       if (!player) return
 
       if (slot < player.weapons.length) {
-        player.weapons.splice(slot, 1)
+        // In-place slot replacement (T-05-12 / D-21): assign directly to preserve
+        // slot-index alignment of weaponStats. The old splice+applyUpgrade pattern
+        // shifted every subsequent slot down by one, corrupting weaponStats keys.
+        player.weapons[slot] = upgradeId
+        // Reset weaponStats for the replaced slot so DPS tracking restarts fresh
+        if (!player.weaponStats) player.weaponStats = {}
+        player.weaponStats[String(slot)] = {
+          totalDamage: 0,
+          acquiredAtMs: this.plainState.elapsedMs,
+        }
+
+        // Sync the in-place change onto the schema immediately (before mirrorStateToSchema)
+        const pSchema = this.state.players.get(sessionId)
+        if (pSchema) {
+          if (pSchema.weapons.length > slot) {
+            pSchema.weapons[slot] = upgradeId
+          } else {
+            pSchema.weapons.push(upgradeId)
+          }
+          // Replace schema weaponStats at this slot with a fresh instance
+          const ws = new WeaponStatsSchema()
+          ws.totalDamage = 0
+          ws.acquiredAtMs = this.plainState.elapsedMs
+          pSchema.weaponStats.set(String(slot), ws)
+        }
+      } else {
+        // Slot does not exist yet (slot === player.weapons.length) — treat as append
+        this.plainState = applyUpgrade(this.plainState, sessionId, upgradeId)
       }
-      this.plainState = applyUpgrade(this.plainState, sessionId, upgradeId)
 
       const timeout = this.upgradeTimeouts.get(sessionId)
       if (timeout) {
@@ -175,22 +204,37 @@ export class SoloRoom extends Room<{ state: GameStateSchema }> {
     return { userId: payload.userId }
   }
 
-  onJoin(client: Client): void {
+  onJoin(client: Client, options?: Record<string, unknown>): void {
     // Add player to plain state at world center
     const centerX = Math.floor(WORLD_W / 2)
     const centerY = Math.floor(WORLD_H / 2)
+
+    // Validate join options via CharacterSelectSchema (T-05-11).
+    // Any missing/invalid classId or weaponId falls back to human/magic_wand.
+    const parseResult = CharacterSelectSchema.safeParse(options ?? {})
+    const classId = parseResult.success ? parseResult.data.classId : 'human'
+    const weaponId = parseResult.success ? parseResult.data.weaponId : 'magic_wand'
+
+    const catalogEntry = characterCatalog[classId]!
 
     const player: PlainPlayerState = {
       id: client.sessionId,
       x: centerX,
       y: centerY,
-      hp: 100,
-      maxHp: 100,
+      hp: catalogEntry.baseMaxHp,
+      maxHp: catalogEntry.baseMaxHp,
       level: 1,
       xp: 0,
-      speed: 10_000,
-      weapons: ['magic_wand:1'],
+      speed: catalogEntry.baseSpeed,
+      weapons: [`${weaponId}:1`],
       passives: [],
+      classId: classId,
+      damageMultiplier: catalogEntry.damageMultiplier,
+      fireRateMultiplier: catalogEntry.fireRateMultiplier,
+      // Seed slot '0' weaponStats for the starting weapon — applyUpgrade only
+      // seeds weaponStats for upgrade-acquired weapons, not the initial weapon.
+      // Without this seed, applyCollisions writes into a missing key on tick 1.
+      weaponStats: { '0': { totalDamage: 0, acquiredAtMs: 0 } },
     }
 
     this.plainState.players.set(client.sessionId, player)
@@ -205,7 +249,13 @@ export class SoloRoom extends Room<{ state: GameStateSchema }> {
     pSchema.maxHp = player.maxHp
     pSchema.level = player.level
     pSchema.xp = player.xp
-    pSchema.weapons.push('magic_wand:1')
+    pSchema.classId = classId
+    // uint16 scaled x100: 1.2 -> 120, 1.0 -> 100. Client divides by 100 on read.
+    pSchema.damageMultiplier = Math.round(catalogEntry.damageMultiplier * 100)
+    pSchema.fireRateMultiplier = Math.round(catalogEntry.fireRateMultiplier * 100)
+    pSchema.weapons.push(`${weaponId}:1`)
+    // Seed slot '0' weaponStats on the schema to match plainState
+    pSchema.weaponStats.set('0', new WeaponStatsSchema())
     this.state.players.set(client.sessionId, pSchema)
   }
 
