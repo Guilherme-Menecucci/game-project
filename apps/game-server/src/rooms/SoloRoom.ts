@@ -42,6 +42,7 @@ import {
   GemSchema,
   ProjectileSchema,
   PickupSchema,
+  BossSchema,
   WeaponStatsSchema,
 } from '../schema/GameSchema.js'
 import { verifyGameToken } from '../lib/gameToken.js'
@@ -254,12 +255,29 @@ export class SoloRoom extends Room<{ state: GameStateSchema }> {
     pSchema.damageMultiplier = Math.round(catalogEntry.damageMultiplier * 100)
     pSchema.fireRateMultiplier = Math.round(catalogEntry.fireRateMultiplier * 100)
     pSchema.weapons.push(`${weaponId}:1`)
-    // Seed slot '0' weaponStats on the schema to match plainState
-    pSchema.weaponStats.set('0', new WeaponStatsSchema())
+    // Seed slot '0' weaponStats on the schema to match plainState.
+    // Explicitly assign totalDamage/acquiredAtMs so the JSON serialization
+    // includes these fields from the start (Colyseus omits fields that have
+    // never been explicitly set, even when the value is the uint32 default 0 —
+    // this ensures anti-cheat snapshot tests see a stable initial serialization).
+    const seedWs = new WeaponStatsSchema()
+    seedWs.totalDamage = 0
+    seedWs.acquiredAtMs = 0
+    pSchema.weaponStats.set('0', seedWs)
     this.state.players.set(client.sessionId, pSchema)
   }
 
   onLeave(client: Client): void {
+    // Set 'survived' if the run has not already ended in defeat.
+    // Check this.clients.length <= 1 BEFORE removing the leaving client —
+    // Colyseus calls onLeave while the client is still in this.clients.
+    // For a solo room (maxClients=1), this condition is always true on the
+    // only player's leave, and future multiplayer rooms must re-evaluate.
+    if (this.clients.length <= 1 && this.plainState.result !== 'defeated') {
+      this.plainState.result = 'survived'
+      this.state.result = 'survived'
+    }
+
     this.plainState.players.delete(client.sessionId)
     this.state.players.delete(client.sessionId)
     this.prevLevels.delete(client.sessionId)
@@ -345,6 +363,13 @@ export class SoloRoom extends Room<{ state: GameStateSchema }> {
 
     // Mirror plain state to Schema (in-place mutation)
     mirrorStateToSchema(this.plainState, this.state)
+
+    // Pause simulation after defeat so no further simulateTick calls occur
+    // (T-05-13). mirrorStateToSchema has already run above, so schema.result
+    // and schema.players.*.hp are visible to clients before the pause takes effect.
+    if (this.plainState.result === 'defeated') {
+      this.simulationPaused = true
+    }
   }
 
   private pauseAndSendLevelUp(sessionId: string): boolean {
@@ -448,6 +473,8 @@ export class SoloRoom extends Room<{ state: GameStateSchema }> {
 function mirrorStateToSchema(plain: PlainGameState, schema: GameStateSchema): void {
   schema.tick = plain.tick
   schema.elapsedMs = plain.elapsedMs
+  schema.kills = plain.kills ?? 0
+  schema.result = plain.result ?? ''
 
   // --- Players: mutate existing, add new, delete removed ---
   for (const [id, p] of plain.players) {
@@ -456,10 +483,16 @@ function mirrorStateToSchema(plain: PlainGameState, schema: GameStateSchema): vo
       const ps = schema.players.get(id)!
       ps.x = p.x
       ps.y = p.y
-      ps.hp = p.hp
+      // Clamp hp to >= 0 before assigning to uint8: simulateTick can produce
+      // negative hp on overkill (e.g. -3), which wraps to 253 in uint8 — visually
+      // un-killing the player on the client.
+      ps.hp = Math.max(0, p.hp)
       ps.maxHp = p.maxHp
       ps.level = p.level
       ps.xp = p.xp
+      ps.classId = p.classId ?? 'human'
+      ps.damageMultiplier = Math.round((p.damageMultiplier ?? 1) * 100)
+      ps.fireRateMultiplier = Math.round((p.fireRateMultiplier ?? 1) * 100)
 
       // Sync weapons: splice to clear then push all
       while (ps.weapons.length > p.weapons.length) {
@@ -486,21 +519,51 @@ function mirrorStateToSchema(plain: PlainGameState, schema: GameStateSchema): vo
       if (ps.passives.length < p.passives.length) {
         ps.passives.push(...p.passives.slice(ps.passives.length))
       }
+
+      // Sync weaponStats (D-21): get-or-create + mutate in-place (MUTATION RULE).
+      // Never re-set an existing key with a new instance — delta encoder tracks instances.
+      const plainWS = p.weaponStats ?? {}
+      for (const [key, stats] of Object.entries(plainWS)) {
+        let ws = ps.weaponStats.get(key)
+        if (!ws) {
+          ws = new WeaponStatsSchema()
+          ps.weaponStats.set(key, ws)
+        }
+        ws.totalDamage = stats.totalDamage
+        ws.acquiredAtMs = stats.acquiredAtMs
+      }
+      // Delete schema weaponStats entries not present in plain state
+      for (const key of ps.weaponStats.keys()) {
+        if (!(key in plainWS)) {
+          ps.weaponStats.delete(key)
+        }
+      }
     } else {
       // Add new player
       const ps = new PlayerSchema()
       ps.id = id
       ps.x = p.x
       ps.y = p.y
-      ps.hp = p.hp
+      ps.hp = Math.max(0, p.hp)
       ps.maxHp = p.maxHp
       ps.level = p.level
       ps.xp = p.xp
+      ps.classId = p.classId ?? 'human'
+      ps.damageMultiplier = Math.round((p.damageMultiplier ?? 1) * 100)
+      ps.fireRateMultiplier = Math.round((p.fireRateMultiplier ?? 1) * 100)
       for (const w of p.weapons) {
         ps.weapons.push(w)
       }
       for (const pass of p.passives) {
         ps.passives.push(pass)
+      }
+      // Seed weaponStats entries for new player
+      const plainWS = p.weaponStats ?? {}
+      for (const [key, stats] of Object.entries(plainWS)) {
+        const ws = new WeaponStatsSchema()
+        ws.totalDamage = stats.totalDamage
+        ws.acquiredAtMs = stats.acquiredAtMs
+        ps.weaponStats.set(key, ws)
       }
       schema.players.set(id, ps)
     }
@@ -519,20 +582,61 @@ function mirrorStateToSchema(plain: PlainGameState, schema: GameStateSchema): vo
       es.x = e.x
       es.y = e.y
       es.hp = e.hp
+      es.maxHp = e.maxHp
       es.archetype = e.archetype
+      es.isElite = e.isElite ?? false
+      es.eliteName = e.eliteName ?? ''
     } else {
       const es = new EnemySchema()
       es.id = id
       es.x = e.x
       es.y = e.y
       es.hp = e.hp
+      es.maxHp = e.maxHp
       es.archetype = e.archetype
+      es.isElite = e.isElite ?? false
+      es.eliteName = e.eliteName ?? ''
       schema.enemies.set(id, es)
     }
   }
   for (const id of schema.enemies.keys()) {
     if (!plain.enemies.has(id)) {
       schema.enemies.delete(id)
+    }
+  }
+
+  // --- Bosses: mutate existing, add new, delete removed ---
+  for (const [id, b] of plain.bosses ?? []) {
+    if (schema.bosses.has(id)) {
+      const bs = schema.bosses.get(id)!
+      bs.id = b.id
+      bs.bossKey = b.bossKey
+      bs.name = b.name
+      bs.x = b.x
+      bs.y = b.y
+      bs.hp = b.hp
+      bs.maxHp = b.maxHp
+      bs.speed = b.speed
+      bs.telegraphState = b.telegraphState ?? 'idle'
+      bs.telegraphTick = b.telegraphTick ?? 0
+    } else {
+      const bs = new BossSchema()
+      bs.id = b.id
+      bs.bossKey = b.bossKey
+      bs.name = b.name
+      bs.x = b.x
+      bs.y = b.y
+      bs.hp = b.hp
+      bs.maxHp = b.maxHp
+      bs.speed = b.speed
+      bs.telegraphState = b.telegraphState ?? 'idle'
+      bs.telegraphTick = b.telegraphTick ?? 0
+      schema.bosses.set(id, bs)
+    }
+  }
+  for (const id of schema.bosses.keys()) {
+    if (!(plain.bosses ?? new Map()).has(id)) {
+      schema.bosses.delete(id)
     }
   }
 
