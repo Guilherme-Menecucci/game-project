@@ -12,6 +12,10 @@ export interface GameOverData {
   xp: number
   weapons?: string[]
   passives?: string[]
+  /** Mirrors GameStateSchema.result — 'survived' | 'defeated' | ''. */
+  result?: string
+  /** Mirrors PlayerSchema.weaponStats, flattened from the Colyseus MapSchema, keyed by slot index. */
+  weaponStats?: Record<string, { totalDamage: number; acquiredAtMs: number }>
 }
 
 interface PhaserGameProps {

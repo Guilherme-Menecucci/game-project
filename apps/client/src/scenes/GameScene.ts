@@ -344,6 +344,19 @@ export class GameScene extends Phaser.Scene {
     const passives = player?.passives ? Array.from(player.passives) : this.lastPassives
     const level = (player?.level as number) ?? this.lastLevel
     const xp = (player?.xp as number) ?? this.lastXp
+    const result = (state?.result as string) ?? ''
+
+    const weaponStatsRaw = player?.weaponStats
+    const weaponStats: Record<string, { totalDamage: number; acquiredAtMs: number }> = {}
+    if (weaponStatsRaw) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      for (const [slot, stats] of weaponStatsRaw as Map<string, any>) {
+        weaponStats[slot] = {
+          totalDamage: stats.totalDamage ?? 0,
+          acquiredAtMs: stats.acquiredAtMs ?? 0,
+        }
+      }
+    }
 
     this.game.events.emit('gameover', {
       killCount: (this.game.registry.get('killCount') as number) ?? 0,
@@ -352,6 +365,8 @@ export class GameScene extends Phaser.Scene {
       xp,
       weapons,
       passives,
+      result,
+      weaponStats,
     })
     // Leave room so server stops ticking this client's player
     void this.room.leave()
