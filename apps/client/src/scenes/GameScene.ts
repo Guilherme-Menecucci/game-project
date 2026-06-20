@@ -18,6 +18,20 @@ import type { Room } from '@colyseus/sdk'
 
 const toGU = (subUnits: number): number => subUnits / 1000
 
+/** Map a player's classId (D-09) to the per-class atlas frame; falls back to the generic 'player' frame. */
+const frameForClassId = (classId: string | undefined): string => {
+  if (classId === 'vampire') return 'player_vampire'
+  if (classId === 'human') return 'player_human'
+  if (classId === 'dwarf') return 'player_dwarf'
+  return 'player'
+}
+
+/** Map a boss's bossKey to the distinct atlas frame (D-18); falls back to boss_patient_zero. */
+const frameForBossKey = (bossKey: string | undefined): string => {
+  if (bossKey === 'unfinished_one') return 'boss_unfinished_one'
+  return 'boss_patient_zero'
+}
+
 export class GameScene extends Phaser.Scene {
   private readonly INPUT_INTERVAL = 50
 
@@ -28,6 +42,7 @@ export class GameScene extends Phaser.Scene {
   private enemySprites = new Map<string, Phaser.GameObjects.Sprite>()
   private gemSprites = new Map<string, Phaser.GameObjects.Sprite>()
   private projectileSprites = new Map<string, Phaser.GameObjects.Sprite>()
+  private bossSprites = new Map<string, Phaser.GameObjects.Sprite>()
   private pickupsGraphics!: Phaser.GameObjects.Graphics
   private auraGraphics!: Phaser.GameObjects.Graphics
 
@@ -117,6 +132,8 @@ export class GameScene extends Phaser.Scene {
     const gems = state.gems as Map<string, any>
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const projectiles = state.projectiles as Map<string, any>
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const bosses = state.bosses as Map<string, any>
 
     this.auraGraphics.clear()
 
@@ -134,7 +151,8 @@ export class GameScene extends Phaser.Scene {
       }
 
       if (!this.playerSprites.has(key)) {
-        const sprite = this.add.sprite(toGU(player.x), toGU(player.y), 'entities', 'player')
+        const frame = frameForClassId(player.classId as string | undefined)
+        const sprite = this.add.sprite(toGU(player.x), toGU(player.y), 'entities', frame)
         sprite.setDepth(2)
         this.playerSprites.set(key, sprite)
         if (key === this.localPlayerId) {
@@ -204,6 +222,25 @@ export class GameScene extends Phaser.Scene {
       if (!enemies.has(key)) {
         this.enemySprites.get(key)!.destroy()
         this.enemySprites.delete(key)
+      }
+    }
+
+    // --- Bosses ---
+    for (const [key, boss] of bosses) {
+      if (!this.bossSprites.has(key)) {
+        const frame = frameForBossKey(boss.bossKey as string | undefined)
+        const sprite = this.add.sprite(toGU(boss.x), toGU(boss.y), 'entities', frame)
+        sprite.setDepth(2.5)
+        this.bossSprites.set(key, sprite)
+      } else {
+        const sprite = this.bossSprites.get(key)!
+        sprite.setPosition(toGU(boss.x), toGU(boss.y))
+      }
+    }
+    for (const key of this.bossSprites.keys()) {
+      if (!bosses.has(key)) {
+        this.bossSprites.get(key)!.destroy()
+        this.bossSprites.delete(key)
       }
     }
 
