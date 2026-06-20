@@ -8,11 +8,18 @@ import styles from './SoloRunStartScreen.module.css'
 type ClassId = 'vampire' | 'human' | 'dwarf'
 type WeaponId = 'magic_wand' | 'garlic' | 'knife' | 'bible'
 
+// Pre-created loadouts (superseding D-03/D-06's independent class+weapon
+// pickers per user feedback on plan 05-09's checkpoint): each class maps to
+// exactly ONE fixed starting weapon. Garlic is intentionally NOT a starting
+// loadout option — it remains an in-run pickup/upgrade only.
+export const CLASS_WEAPON: Record<ClassId, WeaponId> = {
+  vampire: 'magic_wand',
+  human: 'knife',
+  dwarf: 'bible',
+}
+
 // Fixed display order per D-02/05-UI-SPEC.md Component Inventory item 1
 const CLASS_ORDER: ClassId[] = ['vampire', 'human', 'dwarf']
-// Fixed display order matching CharacterSelectSchema's enum order and the
-// existing ITEM_NAMES/ITEM_ICONS convention (GameOverScreen.tsx/UpgradePicker.tsx)
-const WEAPON_ORDER: WeaponId[] = ['magic_wand', 'garlic', 'knife', 'bible']
 
 function statSummaryFor(classId: ClassId): string {
   const entry = characterCatalog[classId]
@@ -33,9 +40,7 @@ interface SoloRunStartScreenProps {
   error: GameError
   user: AuthUser
   selectedClassId: ClassId | null
-  selectedWeaponId: WeaponId | null
   onSelectClass: (classId: ClassId) => void
-  onSelectWeapon: (weaponId: WeaponId) => void
   onSoloRun: () => void
 }
 
@@ -97,21 +102,21 @@ export function SoloRunStartScreen({
   error,
   user,
   selectedClassId,
-  selectedWeaponId,
   onSelectClass,
-  onSelectWeapon,
   onSoloRun,
 }: SoloRunStartScreenProps) {
   const isConnecting = phase === 'CONNECTING'
-  const isCharacterSelect = phase === 'CHARACTER_SELECT'
-  const canStart = !!selectedClassId && !!selectedWeaponId
+  const isCharacterSelect = phase === 'CHARACTER_SELECT' || phase === 'CONNECTING'
+  const canStart = !!selectedClassId && !isConnecting
 
   const displayName = user?.isGuest ? user.displayName : user ? `${user.userId.slice(0, 8)}…` : ''
 
   if (isCharacterSelect) {
+    const selectedEntry = selectedClassId ? characterCatalog[selectedClassId] : null
+
     return (
       <div className={styles.screen}>
-        <div className={`${styles.card} ${styles.characterSelectCard}`}>
+        <div className={styles.loadoutLayout}>
           {error && <ErrorBanner error={error} onRetry={onSoloRun} />}
 
           <h1 className={styles.heading}>Choose Your Survivor</h1>
@@ -122,52 +127,49 @@ export function SoloRunStartScreen({
             </p>
           )}
 
-          <div className={styles.classCardRow}>
+          <div className={styles.loadoutCardRow}>
             {CLASS_ORDER.map((classId) => {
               const entry = characterCatalog[classId]
+              const weaponEntry = weaponCatalog[CLASS_WEAPON[classId]]
               const isSelected = selectedClassId === classId
               return (
                 <button
                   key={classId}
                   type="button"
-                  className={`${styles.classCard} ${isSelected ? styles.classCardSelected : ''}`}
+                  className={`${styles.loadoutCard} ${isSelected ? styles.loadoutCardSelected : ''}`}
                   onClick={() => onSelectClass(classId)}
                 >
                   <p className={styles.classCardName}>{entry.displayName}</p>
-                  <p className={styles.classCardFlavor}>{entry.description}</p>
-                  <p className={styles.classCardStats}>{statSummaryFor(classId)}</p>
+                  <p className={styles.loadoutWeaponName}>{weaponEntry.displayName}</p>
                 </button>
               )
             })}
           </div>
 
-          <p className={styles.sectionHeading}>Choose Your Starting Weapon</p>
-
-          <div className={styles.weaponChipRow}>
-            {WEAPON_ORDER.map((weaponId) => {
-              const entry = weaponCatalog[weaponId]
-              const isSelected = selectedWeaponId === weaponId
-              return (
-                <button
-                  key={weaponId}
-                  type="button"
-                  className={`${styles.weaponChip} ${isSelected ? styles.weaponChipSelected : ''}`}
-                  onClick={() => onSelectWeapon(weaponId)}
-                >
-                  {entry.displayName}
-                </button>
-              )
-            })}
+          <div className={styles.detailsPanel}>
+            {selectedEntry ? (
+              <>
+                <p className={styles.classCardFlavor}>{selectedEntry.description}</p>
+                <p className={styles.classCardStats}>
+                  {statSummaryFor(selectedEntry.classId)} — starts with{' '}
+                  {weaponCatalog[CLASS_WEAPON[selectedEntry.classId]].displayName}
+                </p>
+              </>
+            ) : (
+              <p className={styles.detailsPlaceholder}>Select a loadout to see details</p>
+            )}
           </div>
 
-          <button
-            className={styles.soloRunBtn}
-            type="button"
-            disabled={!canStart}
-            onClick={onSoloRun}
-          >
-            Start Run
-          </button>
+          <div className={styles.startRunWrapper}>
+            <button
+              className={styles.soloRunBtn}
+              type="button"
+              disabled={!canStart}
+              onClick={onSoloRun}
+            >
+              {isConnecting ? 'Connecting…' : 'Start Run'}
+            </button>
+          </div>
 
           <div className={styles.logoutWrapper}>
             <LogoutButton />

@@ -2,7 +2,7 @@ import { useRef, useState, useCallback } from 'react'
 import type { Room } from '@colyseus/sdk'
 import { Client } from '@colyseus/sdk'
 import { useAuth } from '../components/auth/AuthProvider.js'
-import { SoloRunStartScreen } from '../components/game/SoloRunStartScreen.js'
+import { SoloRunStartScreen, CLASS_WEAPON } from '../components/game/SoloRunStartScreen.js'
 import { PhaserGame } from '../components/game/PhaserGame.js'
 import type { GameOverData } from '../components/game/PhaserGame.js'
 import { GameHUD } from '../components/game/GameHUD.js'
@@ -33,10 +33,10 @@ export function GamePage() {
   const [phase, setPhase] = useState<GamePhase>('CHARACTER_SELECT')
   const [error, setError] = useState<GameError>(null)
   const roomRef = useRef<Room | null>(null)
+  // Pre-created loadout selection: the loadout IS the class — weaponId is
+  // derived from CLASS_WEAPON (single source of truth, also used by
+  // SoloRunStartScreen to render each loadout card's bound weapon).
   const [selectedClassId, setSelectedClassId] = useState<'vampire' | 'human' | 'dwarf' | null>(null)
-  const [selectedWeaponId, setSelectedWeaponId] = useState<
-    'magic_wand' | 'garlic' | 'knife' | 'bible' | null
-  >(null)
   const [pendingChoices, setPendingChoices] = useState<UpgradeOption[]>([])
   const [slotFullPayload, setSlotFullPayload] = useState<{
     weapons: string[]
@@ -93,7 +93,7 @@ export function GamePage() {
       const room = await client.create<unknown>('solo_room', {
         token,
         classId: selectedClassId,
-        weaponId: selectedWeaponId,
+        weaponId: selectedClassId ? CLASS_WEAPON[selectedClassId] : null,
       })
       roomRef.current = room as Room
 
@@ -158,13 +158,6 @@ export function GamePage() {
     setSelectedClassId(classId)
   }, [])
 
-  const handleSelectWeapon = useCallback(
-    (weaponId: 'magic_wand' | 'garlic' | 'knife' | 'bible') => {
-      setSelectedWeaponId(weaponId)
-    },
-    []
-  )
-
   const handleUpgradeSelect = useCallback((upgradeId: string) => {
     roomRef.current?.send('upgrade_selected', { upgradeId })
     setPhase('ACTIVE')
@@ -190,10 +183,9 @@ export function GamePage() {
 
   const handleRetry = useCallback(() => {
     // GAME-OVER → CHARACTER_SELECT: deliberate pause — player must re-select
-    // class/weapon and click "Start Run" again. Selections are reset so a new
-    // run always starts with a fresh character-select prompt.
+    // a loadout and click "Start Run" again. Selection is reset so a new run
+    // always starts with a fresh, nothing-selected loadout screen.
     setSelectedClassId(null)
-    setSelectedWeaponId(null)
     setPhase('CHARACTER_SELECT')
   }, [])
 
@@ -205,9 +197,7 @@ export function GamePage() {
           error={error}
           user={user}
           selectedClassId={selectedClassId}
-          selectedWeaponId={selectedWeaponId}
           onSelectClass={handleSelectClass}
-          onSelectWeapon={handleSelectWeapon}
           onSoloRun={() => void handleSoloRun()}
         />
       )}
