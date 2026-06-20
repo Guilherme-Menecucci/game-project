@@ -12,7 +12,14 @@ import { SlotFullModal } from '../components/ui/SlotFullModal.js'
 import type { UpgradeOption } from '@game/shared'
 import styles from './GamePage.module.css'
 
-export type GamePhase = 'IDLE' | 'CONNECTING' | 'ACTIVE' | 'UPGRADING' | 'SLOT_FULL' | 'GAME-OVER'
+export type GamePhase =
+  | 'IDLE'
+  | 'CHARACTER_SELECT'
+  | 'CONNECTING'
+  | 'ACTIVE'
+  | 'UPGRADING'
+  | 'SLOT_FULL'
+  | 'GAME-OVER'
 
 export type GameError =
   | 'SESSION_EXPIRED'
@@ -23,9 +30,13 @@ export type GameError =
 
 export function GamePage() {
   const { user } = useAuth()
-  const [phase, setPhase] = useState<GamePhase>('IDLE')
+  const [phase, setPhase] = useState<GamePhase>('CHARACTER_SELECT')
   const [error, setError] = useState<GameError>(null)
   const roomRef = useRef<Room | null>(null)
+  const [selectedClassId, setSelectedClassId] = useState<'vampire' | 'human' | 'dwarf' | null>(null)
+  const [selectedWeaponId, setSelectedWeaponId] = useState<
+    'magic_wand' | 'garlic' | 'knife' | 'bible' | null
+  >(null)
   const [pendingChoices, setPendingChoices] = useState<UpgradeOption[]>([])
   const [slotFullPayload, setSlotFullPayload] = useState<{
     weapons: string[]
@@ -54,13 +65,13 @@ export function GamePage() {
     try {
       const res = await fetch('/api/auth/game-token', { credentials: 'include' })
       if (res.status === 401) {
-        setPhase('IDLE')
+        setPhase('CHARACTER_SELECT')
         setError('SESSION_EXPIRED')
         return
       }
       if (!res.ok) {
         // 403 or 5xx — treat as server error (UI-SPEC entry flow copywriting)
-        setPhase('IDLE')
+        setPhase('CHARACTER_SELECT')
         setError('SERVER_ERROR')
         return
       }
@@ -68,7 +79,7 @@ export function GamePage() {
       token = data.token
     } catch {
       // Network error
-      setPhase('IDLE')
+      setPhase('CHARACTER_SELECT')
       setError('SERVER_ERROR')
       return
     }
@@ -79,7 +90,11 @@ export function GamePage() {
       // create() — never joinOrCreate(). SoloRoom.maxClients is 4, so
       // joinOrCreate would drop a second player into another player's "solo" run.
       // create() always spins up a fresh, unshared room instance per solo run.
-      const room = await client.create<unknown>('solo_room', { token })
+      const room = await client.create<unknown>('solo_room', {
+        token,
+        classId: selectedClassId,
+        weaponId: selectedWeaponId,
+      })
       roomRef.current = room as Room
 
       // Track weapons and passives
@@ -135,9 +150,20 @@ export function GamePage() {
       } else {
         setError('SERVER_ERROR')
       }
-      setPhase('IDLE')
+      setPhase('CHARACTER_SELECT')
     }
   }
+
+  const handleSelectClass = useCallback((classId: 'vampire' | 'human' | 'dwarf') => {
+    setSelectedClassId(classId)
+  }, [])
+
+  const handleSelectWeapon = useCallback(
+    (weaponId: 'magic_wand' | 'garlic' | 'knife' | 'bible') => {
+      setSelectedWeaponId(weaponId)
+    },
+    []
+  )
 
   const handleUpgradeSelect = useCallback((upgradeId: string) => {
     roomRef.current?.send('upgrade_selected', { upgradeId })
@@ -163,18 +189,25 @@ export function GamePage() {
   }, [])
 
   const handleRetry = useCallback(() => {
-    // GAME-OVER → IDLE: deliberate pause — player must click "Solo Run" again
-    // This is a deliberate pause point giving breathing room before the next run.
-    setPhase('IDLE')
+    // GAME-OVER → CHARACTER_SELECT: deliberate pause — player must re-select
+    // class/weapon and click "Start Run" again. Selections are reset so a new
+    // run always starts with a fresh character-select prompt.
+    setSelectedClassId(null)
+    setSelectedWeaponId(null)
+    setPhase('CHARACTER_SELECT')
   }, [])
 
   return (
     <div className={styles.page}>
-      {(phase === 'IDLE' || phase === 'CONNECTING') && (
+      {(phase === 'IDLE' || phase === 'CHARACTER_SELECT' || phase === 'CONNECTING') && (
         <SoloRunStartScreen
           phase={phase}
           error={error}
           user={user}
+          selectedClassId={selectedClassId}
+          selectedWeaponId={selectedWeaponId}
+          onSelectClass={handleSelectClass}
+          onSelectWeapon={handleSelectWeapon}
           onSoloRun={() => void handleSoloRun()}
         />
       )}
