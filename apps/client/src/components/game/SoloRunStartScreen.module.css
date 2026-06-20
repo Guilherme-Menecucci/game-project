@@ -110,3 +110,83 @@
   display: flex;
   justify-content: center;
 }
+
+/* Character Select Screen (D-05, D-06) — 05-UI-SPEC.md Component Inventory item 1 */
+.characterSelectCard {
+  max-width: 720px;
+}
+
+.classCardRow {
+  display: flex;
+  gap: var(--space-md);
+}
+
+.classCard {
+  padding: var(--space-md);
+  border-radius: 8px;
+  background: var(--color-surface);
+  border: 2px solid var(--color-border);
+  flex: 1;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  text-align: left;
+  font-family: inherit;
+}
+
+.classCardSelected {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 2px var(--color-accent);
+}
+
+.classCardName {
+  font-size: var(--text-body);
+  font-weight: 600;
+  color: var(--color-text);
+  margin: 0;
+}
+
+.classCardFlavor {
+  font-size: var(--text-label);
+  font-weight: 400;
+  color: var(--color-text-muted);
+  margin: 0;
+}
+
+.classCardStats {
+  font-size: var(--text-label);
+  font-weight: 600;
+  color: var(--color-text);
+  margin: 0;
+}
+
+.sectionHeading {
+  font-size: var(--text-label);
+  font-weight: 600;
+  color: var(--color-text-muted);
+  margin: 0;
+}
+
+.weaponChipRow {
+  display: flex;
+  gap: var(--space-sm);
+}
+
+.weaponChip {
+  padding: var(--space-sm) var(--space-md);
+  border-radius: 8px;
+  background: var(--color-surface);
+  border: 2px solid var(--color-border);
+  cursor: pointer;
+  flex: 1;
+  text-align: center;
+  color: var(--color-text);
+  font-family: inherit;
+  font-size: var(--text-label);
+}
+
+.weaponChipSelected {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 2px var(--color-accent);
+}
