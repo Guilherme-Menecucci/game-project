@@ -16,6 +16,7 @@ import { HudHpBar } from './HudHpBar.js'
 import { HudTimer } from './HudTimer.js'
 import { HudXpBar } from './HudXpBar.js'
 import { HudKillCount } from './HudKillCount.js'
+import { HudBossBar } from './HudBossBar.js'
 import { LogoutButton } from '../auth/LogoutButton.js'
 import { WeaponSlotRow } from '../ui/WeaponSlotRow.js'
 import { getXpThresholdForLevel } from '@game/shared'
@@ -34,6 +35,7 @@ export function GameHUD({ room }: GameHUDProps) {
   const [kills, setKills] = useState<number>(0)
   const [weapons, setWeapons] = useState<string[]>([])
   const [passives, setPassives] = useState<string[]>([])
+  const [boss, setBoss] = useState<{ name: string; hp: number; maxHp: number } | null>(null)
 
   // Subscribe to full state changes — fires at ~20Hz server tick rate
   useEffect(() => {
@@ -65,6 +67,11 @@ export function GameHUD({ room }: GameHUDProps) {
         }
       }
       setElapsedMs(state.elapsedMs as number)
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const bosses = state.bosses as Map<string, any>
+      const bossEntry = bosses && bosses.size > 0 ? [...bosses.values()][0] : null
+      setBoss(bossEntry ? { name: bossEntry.name, hp: bossEntry.hp, maxHp: bossEntry.maxHp } : null)
     }
 
     room.onStateChange(handler)
@@ -99,9 +106,10 @@ export function GameHUD({ room }: GameHUDProps) {
         <HudHpBar hp={hp} maxHp={maxHp} />
       </div>
 
-      {/* Top-center: Run timer */}
+      {/* Top-center: Run timer + boss HP bar */}
       <div className={styles.topCenter}>
         <HudTimer elapsedMs={elapsedMs} />
+        {boss && <HudBossBar name={boss.name} hp={boss.hp} maxHp={boss.maxHp} />}
       </div>
 
       {/* Top-right: XP cluster + LogoutButton */}

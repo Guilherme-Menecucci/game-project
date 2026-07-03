@@ -1,0 +1,34 @@
+/* Boss HP cluster — top-center, below HudTimer */
+.cluster {
+  background: var(--color-hud-backing);
+  border: 1px solid var(--color-border);
+  padding: var(--space-xs) var(--space-sm);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.label {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-boss-name-text);
+  text-align: center;
+}
+
+/* Boss bar track — 320×8px fixed (wider than player's 160×8 to dominate visually) */
+.track {
+  width: 320px;
+  height: 8px;
+  background: var(--color-boss-hp-track);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+/* Boss bar fill — single crimson color, no 3-state logic, no pulse */
+.fill {
+  height: 100%;
+  background: var(--color-boss-hp-fill);
+  border-radius: 4px;
+  transition: width 0.2s linear;
+}
