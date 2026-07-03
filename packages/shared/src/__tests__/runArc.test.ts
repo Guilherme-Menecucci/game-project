@@ -55,7 +55,9 @@ describe('30-minute run arc (D-12/D-15)', () => {
         snapshots.set(tick, state)
       }
     }
-  })
+    // 36,100 ticks of the full combat pipeline can exceed vitest's default
+    // 10s hook timeout on slower machines — the loop is deterministic, just slow.
+  }, 60_000)
 
   it('spawns elite1 (Stitched Orderly) at tick 7200 (6 min)', () => {
     const state = snapshots.get(TICK_ELITE1)!
