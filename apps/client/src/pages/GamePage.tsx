@@ -232,6 +232,8 @@ export function GamePage() {
             xp: finalStats.xp,
             weapons: weapons,
             passives: passives,
+            result: finalStats.result,
+            weaponStats: finalStats.weaponStats,
           }}
           onRetry={handleRetry}
         />
