@@ -9,7 +9,7 @@
  * pointer-events: none on root div — all clicks pass through to the Phaser canvas.
  * Only LogoutButton overrides to pointer-events: auto (interactive element).
  */
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import type { Room } from '@colyseus/sdk'
 import { Callbacks } from '@colyseus/sdk'
 import { HudHpBar } from './HudHpBar.js'
@@ -17,6 +17,7 @@ import { HudTimer } from './HudTimer.js'
 import { HudXpBar } from './HudXpBar.js'
 import { HudKillCount } from './HudKillCount.js'
 import { HudBossBar } from './HudBossBar.js'
+import { VictoryBanner } from './VictoryBanner.js'
 import { LogoutButton } from '../auth/LogoutButton.js'
 import { WeaponSlotRow } from '../ui/WeaponSlotRow.js'
 import { getXpThresholdForLevel } from '@game/shared'
@@ -36,6 +37,8 @@ export function GameHUD({ room }: GameHUDProps) {
   const [weapons, setWeapons] = useState<string[]>([])
   const [passives, setPassives] = useState<string[]>([])
   const [boss, setBoss] = useState<{ name: string; hp: number; maxHp: number } | null>(null)
+  const [showVictory, setShowVictory] = useState(false)
+  const prevHasFinalBossRef = useRef(false)
 
   // Subscribe to full state changes — fires at ~20Hz server tick rate
   useEffect(() => {
@@ -72,6 +75,18 @@ export function GameHUD({ room }: GameHUDProps) {
       const bosses = state.bosses as Map<string, any>
       const bossEntry = bosses && bosses.size > 0 ? [...bosses.values()][0] : null
       setBoss(bossEntry ? { name: bossEntry.name, hp: bossEntry.hp, maxHp: bossEntry.maxHp } : null)
+
+      // Victory detection (GAME-16, D-20): no server-side victory event exists —
+      // the only wire signal is bossKey 'unfinished_one' leaving state.bosses.
+      // hp > 0 gate suppresses the banner if the player died the same tick.
+      const hasFinalBoss = bosses
+        ? // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          [...bosses.values()].some((b: any) => b.bossKey === 'unfinished_one')
+        : false
+      if (prevHasFinalBossRef.current && !hasFinalBoss && myPlayer && myPlayer.hp > 0) {
+        setShowVictory(true)
+      }
+      prevHasFinalBossRef.current = hasFinalBoss
     }
 
     room.onStateChange(handler)
@@ -129,6 +144,9 @@ export function GameHUD({ room }: GameHUDProps) {
       <div className={styles.bottomCenter}>
         <WeaponSlotRow weapons={weapons} passives={passives} />
       </div>
+
+      {/* Victory banner — own fixed positioning, self-dismisses after 4s */}
+      <VictoryBanner visible={showVictory} />
     </div>
   )
 }
