@@ -1,4 +1,5 @@
 import { Html } from '@react-three/drei'
+import { formatDps } from './runStats'
 
 interface BuildPanelProps {
   position: [number, number, number]
@@ -39,12 +40,6 @@ const ITEM_ICONS: Record<string, string> = {
 const WEAPON_COLOR = '#4a9eff'
 const PASSIVE_COLOR = '#44cc88'
 const EVOLUTION_COLOR = '#ffcc00'
-
-function formatDps(totalDamage: number, acquiredAtMs: number, elapsedMs: number): string {
-  const activeSec = (elapsedMs - acquiredAtMs) / 1000
-  if (activeSec <= 0) return '0.0'
-  return (totalDamage / activeSec).toFixed(1)
-}
 
 interface LoadoutItemProps {
   id: string

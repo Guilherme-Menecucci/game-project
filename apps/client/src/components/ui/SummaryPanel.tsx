@@ -1,4 +1,5 @@
 import { Html } from '@react-three/drei'
+import { formatTime, resultView } from './runStats'
 
 interface SummaryPanelProps {
   position: [number, number, number]
@@ -8,18 +9,6 @@ interface SummaryPanelProps {
   result: 'survived' | 'defeated' | ''
 }
 
-const RESULT_COLORS = {
-  survived: '#22c55e', // --color-hp-fill
-  defeated: '#e05252', // --color-destructive
-}
-
-function formatTime(ms: number): string {
-  const totalSec = Math.floor(ms / 1000)
-  const mm = String(Math.floor(totalSec / 60)).padStart(2, '0')
-  const ss = String(totalSec % 60).padStart(2, '0')
-  return `${mm}:${ss}`
-}
-
 export function SummaryPanel({
   position,
   elapsedMs,
@@ -27,10 +16,7 @@ export function SummaryPanel({
   totalDamage,
   result,
 }: SummaryPanelProps) {
-  const survived = result === 'survived'
-  const headerColor = survived ? RESULT_COLORS.survived : RESULT_COLORS.defeated
-  const headline = survived ? 'Run Complete' : 'You Were Overwhelmed'
-  const resultLabel = survived ? 'Survived' : 'Defeated'
+  const { headerColor, headline, resultLabel } = resultView(result)
 
   const statRows: [string, string][] = [
     ['Time Survived', formatTime(elapsedMs)],
