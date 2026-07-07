@@ -344,7 +344,10 @@ export class GameScene extends Phaser.Scene {
     const passives = player?.passives ? Array.from(player.passives) : this.lastPassives
     const level = (player?.level as number) ?? this.lastLevel
     const xp = (player?.xp as number) ?? this.lastXp
-    const result = (state?.result as string) ?? ''
+    // Leave-while-alive (server disconnect, voluntary exit routed via Phaser):
+    // mirror SoloRoom.onLeave's rule — not dead at leave time means survived.
+    const syncedResult = (state?.result as string) ?? ''
+    const result = syncedResult || (player && player.hp > 0 ? 'survived' : '')
 
     const weaponStatsRaw = player?.weaponStats
     const weaponStats: Record<string, { totalDamage: number; acquiredAtMs: number }> = {}

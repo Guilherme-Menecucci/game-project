@@ -181,6 +181,16 @@ export function GamePage() {
     setPhase('GAME-OVER')
   }, [])
 
+  const handleEndRun = useCallback(
+    (data: GameOverData) => {
+      // Voluntary exit (GAME-12/16 survived path): leave the room first so the
+      // server's onLeave marks result='survived', then show the summary locally.
+      void roomRef.current?.leave()
+      handleGameOver(data)
+    },
+    [handleGameOver]
+  )
+
   const handleRetry = useCallback(() => {
     // GAME-OVER → CHARACTER_SELECT: deliberate pause — player must re-select
     // a loadout and click "Start Run" again. Selection is reset so a new run
@@ -205,7 +215,7 @@ export function GamePage() {
         roomRef.current && (
           <>
             <PhaserGame room={roomRef.current} onGameOver={handleGameOver} />
-            <GameHUD room={roomRef.current} />
+            <GameHUD room={roomRef.current} onEndRun={handleEndRun} />
           </>
         )}
       {phase === 'UPGRADING' && (

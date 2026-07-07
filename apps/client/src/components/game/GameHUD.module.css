@@ -47,6 +47,24 @@
   pointer-events: auto;
 }
 
+/* "End Run" — voluntary exit to the end-of-run summary (GAME-12/16 survived path) */
+.endRunBtn {
+  background: var(--color-hud-backing);
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  padding: var(--space-xs) var(--space-sm);
+  font-size: var(--text-label);
+  font-weight: 600;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  transition: color 150ms ease, border-color 150ms ease;
+}
+
+.endRunBtn:hover {
+  color: var(--color-text);
+  border-color: var(--color-text-muted);
+}
+
 /* Bottom-left: Kill count */
 .bottomLeft {
   position: absolute;

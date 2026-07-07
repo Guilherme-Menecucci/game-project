@@ -23,11 +23,23 @@ import { WeaponSlotRow } from '../ui/WeaponSlotRow.js'
 import { getXpThresholdForLevel } from '@game/shared'
 import styles from './GameHUD.module.css'
 
-interface GameHUDProps {
-  room: Room
+export interface EndRunStats {
+  killCount: number
+  elapsedMs: number
+  level: number
+  xp: number
+  weapons: string[]
+  passives: string[]
+  result: string
+  weaponStats: Record<string, { totalDamage: number; acquiredAtMs: number }>
 }
 
-export function GameHUD({ room }: GameHUDProps) {
+interface GameHUDProps {
+  room: Room
+  onEndRun?: (stats: EndRunStats) => void
+}
+
+export function GameHUD({ room, onEndRun }: GameHUDProps) {
   const [hp, setHp] = useState<number>(0)
   const [maxHp, setMaxHp] = useState<number>(1)
   const [xp, setXp] = useState<number>(0)
@@ -39,6 +51,7 @@ export function GameHUD({ room }: GameHUDProps) {
   const [boss, setBoss] = useState<{ name: string; hp: number; maxHp: number } | null>(null)
   const [showVictory, setShowVictory] = useState(false)
   const prevHasFinalBossRef = useRef(false)
+  const weaponStatsRef = useRef<Record<string, { totalDamage: number; acquiredAtMs: number }>>({})
 
   // Subscribe to full state changes — fires at ~20Hz server tick rate
   useEffect(() => {
@@ -67,6 +80,19 @@ export function GameHUD({ room }: GameHUDProps) {
         }
         if (myPlayer.passives) {
           setPassives(Array.from(myPlayer.passives))
+        }
+        // Flatten weaponStats MapSchema -> plain Record (same convention as
+        // GameScene.emitGameOver) so End Run can hand a complete summary payload.
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const rawStats = (myPlayer as any).weaponStats as
+          | Map<string, { totalDamage?: number; acquiredAtMs?: number }>
+          | undefined
+        if (rawStats) {
+          const flat: Record<string, { totalDamage: number; acquiredAtMs: number }> = {}
+          for (const [slot, s] of rawStats) {
+            flat[slot] = { totalDamage: s.totalDamage ?? 0, acquiredAtMs: s.acquiredAtMs ?? 0 }
+          }
+          weaponStatsRef.current = flat
         }
       }
       setElapsedMs(state.elapsedMs as number)
@@ -127,12 +153,36 @@ export function GameHUD({ room }: GameHUDProps) {
         {boss && <HudBossBar name={boss.name} hp={boss.hp} maxHp={boss.maxHp} />}
       </div>
 
-      {/* Top-right: XP cluster + LogoutButton */}
+      {/* Top-right: XP cluster + LogoutButton + End Run */}
       <div className={styles.topRight}>
         <HudXpBar xp={xp} threshold={getXpThresholdForLevel(level)} level={level} />
         <div className={styles.logoutWrapper}>
           <LogoutButton />
         </div>
+        {onEndRun && (
+          <div className={styles.logoutWrapper}>
+            <button
+              className={styles.endRunBtn}
+              type="button"
+              onClick={() =>
+                onEndRun({
+                  killCount: kills,
+                  elapsedMs,
+                  level,
+                  xp,
+                  weapons,
+                  passives,
+                  // Voluntary exit while alive = survived — mirrors SoloRoom.onLeave's
+                  // server-side rule (result stays 'defeated' only if already dead).
+                  result: hp > 0 ? 'survived' : 'defeated',
+                  weaponStats: weaponStatsRef.current,
+                })
+              }
+            >
+              End Run
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Bottom-left: Kill count */}
