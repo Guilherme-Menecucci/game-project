@@ -27,6 +27,15 @@ export type PlainPlayerState = {
   speed: number
   weapons: string[]
   passives: string[]
+  // Phase 5: character class identity (CHAR-01/02/03). Default 'human'.
+  classId?: 'vampire' | 'human' | 'dwarf'
+  // Phase 5: class-based stat multipliers (D-03/D-04). Default 1.0.
+  damageMultiplier?: number
+  fireRateMultiplier?: number
+  // Phase 5: per-slot weapon damage tracking, keyed by weapon-array SLOT INDEX
+  // (string '0'-'5'), NOT weapon id — survives evolution/slot replacement (D-21).
+  // Default {}.
+  weaponStats?: Record<string, { totalDamage: number; acquiredAtMs: number }>
 }
 
 export type PlainEnemyState = {
@@ -38,6 +47,26 @@ export type PlainEnemyState = {
   archetype: 'swarmer' | 'tank' | 'ranged'
   speed: number
   lastFireTick: number
+  // Phase 5: set true when this enemy was spawned as a milestone elite.
+  isElite?: boolean
+  // Phase 5: display name shown when isElite is true (e.g. "Stitched Orderly").
+  eliteName?: string
+}
+
+// Phase 5: milestone boss entity (biome boss / final boss). Lives in
+// PlainGameState.bosses, separate from the regular `enemies` map — boss
+// deaths do NOT increment `kills`.
+export type PlainBossState = {
+  id: string
+  bossKey: 'patient_zero' | 'unfinished_one'
+  name: string
+  x: number
+  y: number
+  hp: number
+  maxHp: number
+  speed: number
+  telegraphState?: 'idle' | 'telegraphing' | 'attacking'
+  telegraphTick?: number
 }
 
 export type PlainGemState = {
@@ -57,6 +86,10 @@ export type PlainProjectileState = {
   isEnemy: boolean
   damage: number
   lifetime: number
+  // Phase 5: slot index (string) into owner's player.weapons array for the
+  // weapon that created this projectile. Used by applyCollisions to accumulate
+  // damage into player.weaponStats[weaponSlot] (D-21 / GAME-16).
+  weaponSlot?: string
 }
 
 export type PlainGameState = {
@@ -68,6 +101,17 @@ export type PlainGameState = {
   projectiles: Map<string, PlainProjectileState>
   pickups: Map<string, PlainPickupState>
   prngSeed: number
+  // Phase 5: enemy kills (NOT boss deaths — see PlainBossState). Default 0.
+  kills?: number
+  // Phase 5: milestone bosses (biome boss / final boss). Default new Map().
+  bosses?: Map<string, PlainBossState>
+  // Phase 5: which milestone events have already fired. Keys: 'elite1',
+  // 'elite2', 'elite3', 'elite4', 'biomeBoss', 'finalBoss'. Default {}.
+  milestonesSpawned?: Record<string, boolean>
+  // Phase 5: run outcome (GAME-12). Set to 'defeated' inside simulateTick
+  // when any player's hp reaches 0. 'survived' is set by SoloRoom on
+  // disconnect/leave in a later wave, never inside simulateTick.
+  result?: 'survived' | 'defeated' | undefined
 }
 
 /**
@@ -90,6 +134,10 @@ export function makeInitialState(seed: number): PlainGameState {
     speed: 10_000, // sub-units per tick at 20Hz
     weapons: [],
     passives: [],
+    classId: 'human',
+    damageMultiplier: 1.0,
+    fireRateMultiplier: 1.0,
+    weaponStats: {},
   }
 
   return {
@@ -101,5 +149,9 @@ export function makeInitialState(seed: number): PlainGameState {
     projectiles: new Map(),
     pickups: new Map(),
     prngSeed: seed,
+    kills: 0,
+    bosses: new Map(),
+    milestonesSpawned: {},
+    result: undefined,
   }
 }

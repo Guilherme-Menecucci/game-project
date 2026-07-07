@@ -58,3 +58,13 @@ export const ReplaceSlotSchema = z.object({
   upgradeId: z.string(),
 })
 export type ReplaceSlot = z.infer<typeof ReplaceSlotSchema>
+
+// Phase 5 Schemas
+// CHAR-01/02/03: validates the character_select onJoin option. Server
+// defaults to classId:'human', weaponId:'magic_wand' on safeParse failure
+// (enforced in a later wave's SoloRoom plan) — T-05-00 mitigation.
+export const CharacterSelectSchema = z.object({
+  classId: z.enum(['vampire', 'human', 'dwarf']),
+  weaponId: z.enum(['magic_wand', 'garlic', 'knife', 'bible']),
+})
+export type CharacterSelect = z.infer<typeof CharacterSelectSchema>

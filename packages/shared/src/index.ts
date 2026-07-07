@@ -22,3 +22,9 @@ export * from './weapons.js'
 export * from './weaponCatalog.js'
 export * from './passiveCatalog.js'
 export * from './upgrades.js'
+
+// ─── Phase 5 ────────────────────────────────────────────────────────────────
+export * from './characterCatalog.js'
+export * from './bossCatalog.js'
+export * from './eliteCatalog.js'
+export * from './runMilestones.js'

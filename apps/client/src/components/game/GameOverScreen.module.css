@@ -1,65 +1,15 @@
-/* Game-over overlay — z-index 100, covers Phaser canvas and HUD */
-.backdrop {
+/* Action buttons row — fixed DOM sibling of the R3F Canvas (z-index above 51) */
+.actions {
   position: fixed;
-  inset: 0;
+  bottom: 8vh;
+  left: 50%;
+  transform: translateX(-50%);
   z-index: 100;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(0, 0, 0, 0.7);
-}
-
-/* Centered stats card */
-.card {
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-  padding: var(--space-lg);
-  width: 100%;
-  max-width: 400px;
+  width: 260px;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: var(--space-lg);
-}
-
-/* "Game Over" heading */
-.heading {
-  margin: 0;
-  font-size: var(--text-heading);
-  font-weight: 600;
-  color: var(--color-text);
-  line-height: 1.2;
-}
-
-/* Stats grid — 2-column label + value rows */
-.stats {
-  width: 100%;
-  margin: 0;
-  display: flex;
-  flex-direction: column;
   gap: var(--space-sm);
-}
-
-.statRow {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-}
-
-.statLabel {
-  font-size: var(--text-label);
-  font-weight: 400;
-  color: var(--color-text-muted);
-  line-height: 1.4;
-}
-
-.statValue {
-  font-size: var(--text-body);
-  font-weight: 400;
-  color: var(--color-text);
-  line-height: 1.5;
-  margin: 0;
 }
 
 /* "Try Again" primary CTA */
@@ -94,64 +44,4 @@
 
 .exitLink:hover {
   color: var(--color-text);
-}
-
-.loadoutSection {
-  width: 100%;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-xs);
-  margin-top: var(--space-sm);
-  align-items: center;
-}
-
-.loadoutHeading {
-  font-size: 13px;
-  font-weight: 700;
-  text-transform: uppercase;
-  color: var(--color-text-muted);
-  margin: 0;
-  letter-spacing: 0.05em;
-}
-
-.loadoutRow {
-  width: 100%;
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 8px;
-}
-
-.loadoutItem {
-  position: relative;
-  width: 44px;
-  height: 44px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 6px;
-  background-color: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  font-size: 20px;
-  cursor: help;
-  transition: transform 150ms ease, background-color 150ms ease;
-}
-
-.loadoutItem:hover {
-  transform: scale(1.05);
-  background-color: rgba(255, 255, 255, 0.06);
-}
-
-.itemIcon {
-  line-height: 1;
-}
-
-.itemLvlBadge {
-  position: absolute;
-  bottom: 2px;
-  right: 4px;
-  font-size: 9px;
-  font-weight: 800;
-  color: #ffcc00;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
 }

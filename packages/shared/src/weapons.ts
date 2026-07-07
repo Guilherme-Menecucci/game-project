@@ -7,8 +7,9 @@
  * Functions:
  *   autoFire         — player fires toward nearest enemy every AUTO_FIRE_INTERVAL_TICKS
  *   applyEnemyAI     — swarmer/tank chase; ranged keep-distance + periodic fire (GAME-05)
+ *   applyBossAI      — boss movement + D-19 idle->telegraphing->attacking state machine (Phase 5)
  *   applyProjectileMovement — move all projectiles, apply toroidal wrap, expire by lifetime
- *   applyCollisions  — UniformGrid broadphase; player proj→enemy; enemy proj→player
+ *   applyCollisions  — UniformGrid broadphase; player proj→enemy; enemy proj→player; boss hits
  *   applyEnemyContactDamage — enemy overlapping player reduces player HP
  *   applyGemCollection — gems attract toward player; snap-collect awards XP
  *   applyLevelUp     — player levels up when xp >= XP_LEVEL_THRESHOLD
@@ -17,9 +18,19 @@
  *   T-3-02: XP/level incremented only here, never from client message
  *   T-3-05: HP decremented only here, server-side
  *   T-3-06: Enemy projectiles created only when archetype==='ranged' + fire interval
+ *
+ * Phase 5 additions (weaponStats, kills, bosses — D-21/GAME-13/GAME-16):
+ *   - weaponStats is keyed by player.weapons slot INDEX (string '0'-'5'), NOT weapon id.
+ *     This survives weapon evolution and slot replacement (D-21).
+ *   - Damage accumulation in weaponStats is CLAMPED to enemy remaining hp (no overkill
+ *     counted) — reflects "damage dealt" semantics for the GameOverScreen DPS display.
+ *   - state.kills counts only `enemies` map removals — `bosses` map removals are
+ *     milestone events (GAME-13/BIOM-02), tracked via milestonesSpawned, not kills.
+ *     See applyBossAI / applyCollisions boss-hit pass for boss removal logic.
  */
 
-import type { PlainGameState, PlainPlayerState, PlainEnemyState } from './state.js'
+import type { PlainGameState, PlainPlayerState, PlainEnemyState, PlainBossState } from './state.js'
+import { bossCatalog } from './bossCatalog.js'
 import { UniformGrid, WORLD_W, WORLD_H } from './spatialGrid.js'
 import type { Prng } from './prng.js'
 import { XP_PER_ARCHETYPE, rollPickupDrop } from './spawn.js'
@@ -152,6 +163,14 @@ function getWeaponStats(weaponId: string, level: number = 1): WeaponStats {
 /**
  * autoFire(state, inputs, prng) — fires player projectiles toward nearest enemy or movement direction.
  * Iterates through all player weapons, applying passive modifiers.
+ *
+ * Phase 5 additions:
+ *   - Applies player.damageMultiplier / player.fireRateMultiplier (CHAR-01/02).
+ *   - Tracks weapon slot index and sets weaponSlot on all created projectiles (D-21).
+ *   - Eagerly initializes weaponStats[slotIndex] on first encounter (acquiredAtMs set on
+ *     weapon acquisition, not first hit, so DPS display shows correct elapsed time).
+ *   - Garlic branch accumulates damage directly into weaponStats (garlic has no projectile).
+ *   - Garlic kills increment state.kills (must_haves: all enemies map removals count).
  */
 export function autoFire(
   state: PlainGameState,
@@ -162,7 +181,9 @@ export function autoFire(
   const newEnemies = new Map(state.enemies)
   const newGems = new Map(state.gems)
   const newPickups = new Map(state.pickups)
+  const newPlayers = new Map(state.players)
   let changed = false
+  let killsDelta = 0
 
   for (const [playerId, player] of state.players) {
     const playerWeapons =
@@ -188,17 +209,44 @@ export function autoFire(
     const speedMult = BRACER_MULTS[bracerLvl] || 1.0
     const cooldownMult = EMPTY_TOME_MULTS[emptyTomeLvl] || 1.0
 
-    for (const weaponItem of playerWeapons) {
+    // Phase 5: class-based multipliers (CHAR-01/02). Default 1.0 for human.
+    const classDamageMult = player.damageMultiplier ?? 1.0
+    const classFireRateMult = player.fireRateMultiplier ?? 1.0
+
+    for (let slotIdx = 0; slotIdx < playerWeapons.length; slotIdx++) {
+      const weaponItem = playerWeapons[slotIdx]
+      const slotIndex = String(slotIdx)
       const [weaponId, levelStr] = weaponItem.split(':')
       const level = levelStr ? parseInt(levelStr, 10) : 1
       const stats = getWeaponStats(weaponId, level)
-      const cooldown = Math.max(1, Math.round(stats.fireRateTicks * cooldownMult))
+
+      // Phase 5: apply class fire-rate multiplier multiplicatively with passive cooldownMult.
+      // fireRateMultiplier < 1.0 means faster firing (e.g. vampire at 0.9 reduces cooldown ticks).
+      const cooldown = Math.max(
+        1,
+        Math.round(stats.fireRateTicks * cooldownMult * classFireRateMult)
+      )
+
+      // Phase 5: eagerly initialize weaponStats[slotIndex] on first encounter so acquiredAtMs
+      // is recorded at weapon acquisition time, not at first hit (D-21 DPS formula requires
+      // accurate elapsed time from the moment the weapon was first active).
+      const currentPlayer = newPlayers.get(playerId) ?? player
+      const existingStats = currentPlayer.weaponStats ?? {}
+      if (existingStats[slotIndex] === undefined) {
+        const updatedStats = {
+          ...existingStats,
+          [slotIndex]: { totalDamage: 0, acquiredAtMs: state.elapsedMs },
+        }
+        newPlayers.set(playerId, { ...currentPlayer, weaponStats: updatedStats })
+        changed = true
+      }
 
       if (state.tick % cooldown !== 0) {
         continue
       }
 
-      const damage = Math.round(stats.damage * damageMult)
+      // Phase 5: class damage multiplier applied multiplicatively on top of passive damageMult.
+      const damage = Math.round(stats.damage * damageMult * classDamageMult)
       const projectileSpeed = Math.round(stats.projectileSpeed * speedMult)
 
       if (weaponId === 'garlic') {
@@ -207,12 +255,34 @@ export function autoFire(
         const rMult = garlicRadiusMults[lvlIdx]
         const garlicRadius = 60_000 * rMult
         const garlicRadiusSq = garlicRadius * garlicRadius
+
         for (const [enemyId, enemy] of newEnemies) {
-          const distSq = toroidalDistSq(player.x, player.y, enemy.x, enemy.y)
+          // Re-read from newPlayers each iteration so weaponStats accumulate correctly
+          // without mutating the input state (WR-05: removes Object.assign on live reference).
+          const garlicPlayer = newPlayers.get(playerId) ?? player
+          const garlicStats = garlicPlayer.weaponStats ?? {}
+
+          const distSq = toroidalDistSq(garlicPlayer.x, garlicPlayer.y, enemy.x, enemy.y)
           if (distSq <= garlicRadiusSq) {
+            // Clamp damage to remaining hp (no overkill counted — D-21 "damage dealt" semantics)
+            const actualDamage = Math.min(damage, enemy.hp)
             const updatedHp = enemy.hp - damage
+
+            // Accumulate clamped damage into weaponStats[slotIndex]
+            const slotStat = garlicStats[slotIndex] ?? {
+              totalDamage: 0,
+              acquiredAtMs: state.elapsedMs,
+            }
+            const updatedSlotStat = {
+              ...slotStat,
+              totalDamage: slotStat.totalDamage + actualDamage,
+            }
+            const updatedWeaponStats = { ...garlicStats, [slotIndex]: updatedSlotStat }
+            newPlayers.set(playerId, { ...garlicPlayer, weaponStats: updatedWeaponStats })
+
             if (updatedHp <= 0) {
               newEnemies.delete(enemyId)
+              killsDelta++
               const gemId = `gem_${state.tick}_${enemyId}`
               const xpValue = XP_PER_ARCHETYPE[enemy.archetype]
               newGems.set(gemId, {
@@ -271,6 +341,7 @@ export function autoFire(
           isEnemy: false,
           damage,
           lifetime: PLAYER_PROJECTILE_LIFETIME,
+          weaponSlot: slotIndex,
         })
         changed = true
       } else if (weaponId === 'bible') {
@@ -286,6 +357,7 @@ export function autoFire(
             isEnemy: false,
             damage,
             lifetime: PLAYER_PROJECTILE_LIFETIME,
+            weaponSlot: slotIndex,
           })
         }
         changed = true
@@ -323,6 +395,7 @@ export function autoFire(
           isEnemy: false,
           damage,
           lifetime: PLAYER_PROJECTILE_LIFETIME,
+          weaponSlot: slotIndex,
         })
         changed = true
       }
@@ -336,6 +409,8 @@ export function autoFire(
     enemies: newEnemies,
     gems: newGems,
     pickups: newPickups,
+    players: newPlayers,
+    kills: (state.kills ?? 0) + killsDelta,
   }
 }
 
@@ -409,6 +484,9 @@ export function applyEnemyAI(state: PlainGameState): PlainGameState {
         const ex_vx = Math.round(Math.cos(fireAngle) * ENEMY_PROJECTILE_SPEED)
         const ex_vy = Math.round(Math.sin(fireAngle) * ENEMY_PROJECTILE_SPEED)
 
+        // Phase 5: elite ranged (The Harvester, isElite===true) deal double projectile damage.
+        const projDamage = enemy.isElite ? ENEMY_PROJECTILE_DAMAGE * 2 : ENEMY_PROJECTILE_DAMAGE
+
         const projId = `eproj_${state.tick}_${enemyId}`
         newProjectiles.set(projId, {
           id: projId,
@@ -418,7 +496,7 @@ export function applyEnemyAI(state: PlainGameState): PlainGameState {
           vy: ex_vy,
           ownerId: enemyId,
           isEnemy: true,
-          damage: ENEMY_PROJECTILE_DAMAGE,
+          damage: projDamage,
           lifetime: ENEMY_PROJECTILE_LIFETIME,
         })
         projChanged = true
@@ -432,6 +510,134 @@ export function applyEnemyAI(state: PlainGameState): PlainGameState {
   const result: PlainGameState = { ...state, enemies: newEnemies }
   if (projChanged) {
     result.projectiles = newProjectiles
+  }
+  return result
+}
+
+// ─── applyBossAI ──────────────────────────────────────────────────────────────
+
+/**
+ * applyBossAI(state, prng) — boss movement and D-19 telegraph state machine.
+ *
+ * Telegraph cycle uses a 100-tick period (5 seconds at 20Hz) tracked via
+ * boss.telegraphTick (range 0-99, wrapping):
+ *   - ticks 0-79  → 'idle':        boss moves toward nearest player at boss.speed
+ *   - ticks 80-98 → 'telegraphing': boss holds position, telegraphTick increments
+ *   - tick 99     → 'attacking':   boss deals contact-radius damage to nearby players,
+ *                                  then cycle resets (telegraphTick wraps to 0 → 'idle')
+ *
+ * telegraphState is derived from telegraphTick:
+ *   telegraphTick < 80 → 'idle'
+ *   telegraphTick < 99 → 'telegraphing'
+ *   telegraphTick >= 99 → 'attacking' (exactly the 99th tick)
+ *
+ * IMPORTANT: always use `boss.telegraphTick ?? 0` — undefined telegraphTick
+ * (freshly-spawned boss) must default to 0, not trigger 'attacking' on first tick.
+ *
+ * Wired into simulateTick pipeline in plan 05-06.
+ */
+export function applyBossAI(state: PlainGameState): PlainGameState {
+  const bosses = state.bosses
+  if (!bosses || bosses.size === 0 || state.players.size === 0) return state
+
+  const newBosses = new Map<string, PlainBossState>()
+  const newPlayers = new Map(state.players)
+  let playersChanged = false
+
+  for (const [bossId, boss] of bosses) {
+    const telegraphTick = boss.telegraphTick ?? 0
+    const nextTelegraphTick = (telegraphTick + 1) % 100
+
+    let telegraphState: 'idle' | 'telegraphing' | 'attacking'
+    if (telegraphTick < 80) {
+      telegraphState = 'idle'
+    } else if (telegraphTick < 99) {
+      telegraphState = 'telegraphing'
+    } else {
+      telegraphState = 'attacking'
+    }
+
+    let newX = boss.x
+    let newY = boss.y
+
+    if (telegraphState === 'idle') {
+      // Move toward nearest player at boss.speed
+      const target = nearestPlayer(boss.x, boss.y, state.players)
+      if (target !== null) {
+        const dx = toroidalDelta(boss.x, target.x, WORLD_W)
+        const dy = toroidalDelta(boss.y, target.y, WORLD_H)
+        const dist = Math.sqrt(dx * dx + dy * dy)
+        if (dist > 0) {
+          const nx = dx / dist
+          const ny = dy / dist
+          newX = toroidal(boss.x + Math.round(nx * boss.speed), WORLD_W)
+          newY = toroidal(boss.y + Math.round(ny * boss.speed), WORLD_H)
+        }
+      }
+    }
+    // 'telegraphing': hold position (no movement)
+    // 'attacking': deal damage this tick, then transition to idle
+
+    if (telegraphState === 'attacking') {
+      // Deal contact damage to all players within attack radius
+      const catalogEntry = bossCatalog[boss.bossKey]
+      const attackDamage = catalogEntry?.contactDamage ?? 10
+
+      if (boss.bossKey === 'patient_zero') {
+        // Ground slam: circular radius check around current boss position
+        const attackRadius = ENEMY_CONTACT_RADIUS * 3
+        const attackRadiusSq = attackRadius * attackRadius
+        for (const [playerId, player] of newPlayers) {
+          const distSq = toroidalDistSq(boss.x, boss.y, player.x, player.y)
+          if (distSq <= attackRadiusSq) {
+            const updatedHp = Math.max(0, player.hp - attackDamage)
+            newPlayers.set(playerId, { ...player, hp: updatedHp })
+            playersChanged = true
+          }
+        }
+      } else if (boss.bossKey === 'unfinished_one') {
+        // Charge lunge: approximate as two radius checks — at boss position and
+        // at midpoint toward nearest player (D-19 charge vector approximation).
+        const attackRadius = ENEMY_CONTACT_RADIUS * 2
+        const attackRadiusSq = attackRadius * attackRadius
+        const chargeTarget = nearestPlayer(boss.x, boss.y, state.players)
+        const midX = chargeTarget
+          ? toroidal(
+              boss.x + Math.round(toroidalDelta(boss.x, chargeTarget.x, WORLD_W) / 2),
+              WORLD_W
+            )
+          : boss.x
+        const midY = chargeTarget
+          ? toroidal(
+              boss.y + Math.round(toroidalDelta(boss.y, chargeTarget.y, WORLD_H) / 2),
+              WORLD_H
+            )
+          : boss.y
+
+        for (const [playerId, player] of newPlayers) {
+          const distSqCenter = toroidalDistSq(boss.x, boss.y, player.x, player.y)
+          const distSqMid = toroidalDistSq(midX, midY, player.x, player.y)
+          if (distSqCenter <= attackRadiusSq || distSqMid <= attackRadiusSq) {
+            const updatedHp = Math.max(0, player.hp - attackDamage)
+            newPlayers.set(playerId, { ...player, hp: updatedHp })
+            playersChanged = true
+          }
+        }
+      }
+    }
+
+    newBosses.set(bossId, {
+      ...boss,
+      x: newX,
+      y: newY,
+      telegraphTick: nextTelegraphTick,
+      telegraphState,
+    })
+  }
+
+  const result: PlainGameState = { ...state, bosses: newBosses }
+  if (playersChanged) {
+    result.players = newPlayers
   }
   return result
 }
@@ -497,13 +703,21 @@ export function applyProjectileMovement(state: PlainGameState): PlainGameState {
  * applyCollisions(state) — UniformGrid-based O(n) collision detection.
  *
  * Pass 1: Player projectiles (isEnemy===false) vs enemies.
- *   Hit → decrement enemy.hp; if hp <= 0: remove enemy, drop gem.
+ *   Hit → decrement enemy.hp; if hp <= 0: remove enemy, drop gem, increment kills.
+ *   Accumulate clamped damage into owner's weaponStats[proj.weaponSlot] (D-21).
  *   Remove projectile on first hit.
+ *
+ * Pass 1b: Player projectiles vs bosses (additive scan after enemy check).
+ *   Boss removal does NOT increment state.kills (see Phase 5 comment block above).
  *
  * Pass 2: Enemy projectiles (isEnemy===true) vs players.
  *   Hit → player.hp = max(0, player.hp - damage); remove projectile.
  *
  * T-3-05 mitigation: HP decremented server-side only from authoritative state.
+ *
+ * Boss removal from state.bosses does NOT increment state.kills — bosses are
+ * milestone events (GAME-13/BIOM-02), tracked via milestonesSpawned, not via
+ * the kills counter (see 05-01 decision log).
  */
 export function applyCollisions(state: PlainGameState, prng: Prng): PlainGameState {
   const newEnemies = new Map(state.enemies)
@@ -511,7 +725,9 @@ export function applyCollisions(state: PlainGameState, prng: Prng): PlainGameSta
   const newProjectiles = new Map(state.projectiles)
   const newGems = new Map(state.gems)
   const newPickups = new Map(state.pickups)
+  const newBosses = new Map(state.bosses ?? new Map<string, PlainBossState>())
   let changed = false
+  let killsDelta = 0
 
   // ── Pass 1: Player projectiles vs enemies ──
   if (state.enemies.size > 0) {
@@ -529,10 +745,34 @@ export function applyCollisions(state: PlainGameState, prng: Prng): PlainGameSta
         const enemy = newEnemies.get(enemyId)
         if (enemy === undefined) continue // already dead from prior projectile this tick
 
+        // Clamp damage to remaining hp (no overkill — D-21 "damage dealt" semantics)
+        const actualDamage = Math.min(proj.damage, enemy.hp)
         const updatedHp = enemy.hp - proj.damage
+
+        // Accumulate clamped damage into owner's weaponStats[weaponSlot]
+        if (proj.weaponSlot !== undefined) {
+          const owner = newPlayers.get(proj.ownerId)
+          if (owner !== undefined) {
+            const ownerStats = owner.weaponStats ?? {}
+            const slotStat = ownerStats[proj.weaponSlot] ?? {
+              totalDamage: 0,
+              acquiredAtMs: state.elapsedMs,
+            }
+            const updatedSlotStat = {
+              ...slotStat,
+              totalDamage: slotStat.totalDamage + actualDamage,
+            }
+            newPlayers.set(proj.ownerId, {
+              ...owner,
+              weaponStats: { ...ownerStats, [proj.weaponSlot]: updatedSlotStat },
+            })
+          }
+        }
+
         if (updatedHp <= 0) {
-          // Enemy dead: drop gem at death position
+          // Enemy dead: drop gem at death position, increment kills
           newEnemies.delete(enemyId)
+          killsDelta++
           const gemId = `gem_${state.tick}_${enemyId}`
           const xpValue = XP_PER_ARCHETYPE[enemy.archetype]
           newGems.set(gemId, {
@@ -554,6 +794,57 @@ export function applyCollisions(state: PlainGameState, prng: Prng): PlainGameSta
         newProjectiles.delete(projId)
         changed = true
         break // one projectile hits one enemy
+      }
+    }
+  }
+
+  // ── Pass 1b: Player projectiles vs bosses (additive, after enemy check) ──
+  // state.bosses is bounded to 1-2 active entries — linear scan is acceptable (T-05-06 accept).
+  if (newBosses.size > 0) {
+    for (const [projId, proj] of state.projectiles) {
+      if (proj.isEnemy) continue // skip enemy projectiles
+      if (!newProjectiles.has(projId)) continue // already consumed by Pass 1
+
+      for (const [bossId, boss] of newBosses) {
+        const distSq = toroidalDistSq(proj.x, proj.y, boss.x, boss.y)
+        if (distSq > PROJECTILE_HIT_RADIUS * PROJECTILE_HIT_RADIUS) continue
+
+        // Hit: clamp damage to remaining boss hp
+        const actualDamage = Math.min(proj.damage, boss.hp)
+
+        // Accumulate clamped damage into owner's weaponStats[weaponSlot]
+        if (proj.weaponSlot !== undefined) {
+          const owner = newPlayers.get(proj.ownerId)
+          if (owner !== undefined) {
+            const ownerStats = owner.weaponStats ?? {}
+            const slotStat = ownerStats[proj.weaponSlot] ?? {
+              totalDamage: 0,
+              acquiredAtMs: state.elapsedMs,
+            }
+            const updatedSlotStat = {
+              ...slotStat,
+              totalDamage: slotStat.totalDamage + actualDamage,
+            }
+            newPlayers.set(proj.ownerId, {
+              ...owner,
+              weaponStats: { ...ownerStats, [proj.weaponSlot]: updatedSlotStat },
+            })
+          }
+        }
+
+        const updatedBossHp = boss.hp - proj.damage
+        if (updatedBossHp <= 0) {
+          // Boss dead: remove from bosses map — do NOT increment kills.
+          // Boss removal is a milestone event, tracked via milestonesSpawned (GAME-13/BIOM-02).
+          newBosses.delete(bossId)
+        } else {
+          newBosses.set(bossId, { ...boss, hp: updatedBossHp })
+        }
+
+        // Remove the projectile after first boss hit
+        newProjectiles.delete(projId)
+        changed = true
+        break // one projectile hits one boss
       }
     }
   }
@@ -587,6 +878,7 @@ export function applyCollisions(state: PlainGameState, prng: Prng): PlainGameSta
 
   if (
     !changed &&
+    killsDelta === 0 &&
     newEnemies.size === state.enemies.size &&
     newGems.size === state.gems.size &&
     newPickups.size === state.pickups.size
@@ -600,6 +892,8 @@ export function applyCollisions(state: PlainGameState, prng: Prng): PlainGameSta
     projectiles: newProjectiles,
     gems: newGems,
     pickups: newPickups,
+    bosses: newBosses,
+    kills: (state.kills ?? 0) + killsDelta,
   }
 }
 
@@ -731,6 +1025,7 @@ export function applyPickupCollection(state: PlainGameState): PlainGameState {
   const newGems = new Map(state.gems)
   const newEnemies = new Map(state.enemies)
   let changed = false
+  let killsDelta = 0
 
   const radiusSq = PICKUP_COLLECT_RADIUS * PICKUP_COLLECT_RADIUS
 
@@ -750,6 +1045,7 @@ export function applyPickupCollection(state: PlainGameState): PlainGameState {
             newGems.set(gemId, { ...gem, x: updatedPlayer.x, y: updatedPlayer.y })
           }
         } else if (pickup.kind === 'screen_bomb') {
+          killsDelta += newEnemies.size
           newEnemies.clear()
         }
 
@@ -767,5 +1063,6 @@ export function applyPickupCollection(state: PlainGameState): PlainGameState {
     players: newPlayers,
     gems: newGems,
     enemies: newEnemies,
+    kills: (state.kills ?? 0) + killsDelta,
   }
 }

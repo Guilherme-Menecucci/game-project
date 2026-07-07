@@ -50,6 +50,28 @@
   --color-slot-empty: #2a2a3e;
 }
 
+/* ─── Phase 5 game-specific tokens ─── */
+:root {
+  --color-boss-hp-fill: #c0392b;
+  --color-boss-hp-track: #2a2c38;
+  --color-boss-name-text: #f0f0f5;
+  --color-telegraph-flash: #ff4444;
+  --color-telegraph-flash-alt: #ffcc00;
+  --color-danger-zone-fill: rgba(224, 82, 82, 0.18);
+  --color-danger-zone-outline: rgba(255, 68, 68, 0.85);
+  --color-elite-glow: #ffcc00;
+  --color-lab-floor-base: #23262f;
+  --color-lab-floor-grid: #2f323d;
+  --color-lab-floor-stain: #3a2f2f;
+  --color-pickup-serum: #9be15d;
+  --color-pickup-serum-glow: #d4f7a1;
+  --color-pickup-formaldehyde: #e05252;
+  --color-pickup-specimen-jar: #4a9eff;
+  --color-pickup-chemical: #b266ff;
+  --color-victory-glow: #ffcc00;
+  --color-victory-bg: rgba(14, 15, 20, 0.92);
+}
+
 body {
   margin: 0;
   background: var(--color-bg);
