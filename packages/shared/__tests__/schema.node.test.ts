@@ -8,6 +8,7 @@ describe('PlayerInputSchema — Node environment', () => {
       moveVector: { x: 1, y: 0 },
       aimAngle: 0.5,
       actionFlags: 0,
+      seq: 0, // required as of Phase 6 Wave 0 (anti-replay)
     })
     expect(result.success).toBe(true)
   })
@@ -31,6 +32,7 @@ describe('PlayerInputSchema — Node environment', () => {
       moveVector: { x: 0, y: -1 },
       aimAngle: Math.PI,
       actionFlags: 1,
+      seq: 0, // required as of Phase 6 Wave 0 (anti-replay)
     }
     expect(typeof input).toBe('object')
   })

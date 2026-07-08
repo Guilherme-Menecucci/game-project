@@ -18,8 +18,10 @@ export const PlayerInputSchema = z.object({
   aimAngle: z.number().finite(),
   actionFlags: z.number().int(),
   // D-02: Anti-replay sequence number — monotone per client connection.
-  // Optional in Phase 3 for backward compat; will be required in Phase 4.
-  seq: z.number().int().min(0).optional(),
+  // REQUIRED as of Phase 6 Wave 0 (T-06-01): the room's input handler drops
+  // any frame whose seq is <= the last accepted seq for that session, so every
+  // input must carry one. Client already sends it (GameScene sendSeq++).
+  seq: z.number().int().min(0),
   // D-02: Server tick reference — ties input snapshot to the authoritative tick.
   // Optional in Phase 3 for backward compat; will be required in Phase 4.
   tick: z.number().int().min(0).optional(),

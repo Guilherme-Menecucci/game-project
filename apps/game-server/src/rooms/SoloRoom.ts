@@ -58,6 +58,10 @@ export class SoloRoom extends Room<{ state: GameStateSchema }> {
   private plainState!: PlainGameState
   private prng!: Prng
   private pendingInputs: Map<string, PlayerInput> = new Map()
+  // Anti-replay watermark (T-06-01): highest accepted input seq per SESSION.
+  // Keyed by client.sessionId (never userId — Pitfall 7: a rejoining player
+  // gets a fresh session and must restart at seq 0). Cleaned in onLeave.
+  private lastSeq = new Map<string, number>()
   private prevLevels = new Map<string, number>()
   private pendingUpgradeOptions = new Map<string, UpgradeOption[]>()
   private upgradeTimeouts = new Map<string, ReturnType<typeof setTimeout>>()
@@ -95,6 +99,12 @@ export class SoloRoom extends Room<{ state: GameStateSchema }> {
       if (!this.allowMessage(client)) return // WS rate limit (T-3-DoS / PITFALLS S4)
       const result = PlayerInputSchema.safeParse(data)
       if (!result.success) return // silently drop invalid input
+      // Anti-replay monotonic check (T-06-01): drop any frame whose seq is not
+      // strictly greater than the last accepted one for this session. Silent
+      // drop matches the anti-cheat posture of the wildcard handler.
+      const last = this.lastSeq.get(client.sessionId) ?? -1
+      if (result.data.seq <= last) return
+      this.lastSeq.set(client.sessionId, result.data.seq)
       this.pendingInputs.set(client.sessionId, result.data)
     })
 
@@ -291,6 +301,7 @@ export class SoloRoom extends Room<{ state: GameStateSchema }> {
     this.prevLevels.delete(client.sessionId)
     this.pendingUpgradeOptions.delete(client.sessionId)
     this.messageRate.delete(client.sessionId)
+    this.lastSeq.delete(client.sessionId) // anti-replay watermark is per-session (Pitfall 7)
     const timeout = this.upgradeTimeouts.get(client.sessionId)
     if (timeout) {
       clearTimeout(timeout)

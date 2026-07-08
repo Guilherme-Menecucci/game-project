@@ -13,6 +13,7 @@ describe('PlayerInputSchema — jsdom (browser context)', () => {
       moveVector: { x: 1, y: 0 },
       aimAngle: 0,
       actionFlags: 0,
+      seq: 0, // required as of Phase 6 Wave 0 (anti-replay)
     })
     expect(result.success).toBe(true)
   })
