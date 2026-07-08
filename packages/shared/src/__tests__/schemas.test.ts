@@ -42,6 +42,32 @@ describe('PlayerInputSchema rejects non-finite values', () => {
   })
 })
 
+describe('PlayerInputSchema seq requirement (Phase 6 Wave 0 anti-replay)', () => {
+  const base = { moveVector: { x: 0, y: 0 }, aimAngle: 0, actionFlags: 0 }
+
+  it('rejects payloads with no seq field', () => {
+    // seq is required as of Phase 6 Wave 0 — anti-replay depends on every
+    // input frame carrying a monotone sequence number.
+    expect(PlayerInputSchema.safeParse({ ...base, tick: 0 }).success).toBe(false)
+  })
+
+  it('accepts seq: 0 (fresh connection starts at zero)', () => {
+    expect(PlayerInputSchema.safeParse({ ...base, seq: 0, tick: 0 }).success).toBe(true)
+  })
+
+  it('rejects negative seq', () => {
+    expect(PlayerInputSchema.safeParse({ ...base, seq: -1, tick: 0 }).success).toBe(false)
+  })
+
+  it('rejects fractional seq', () => {
+    expect(PlayerInputSchema.safeParse({ ...base, seq: 1.5, tick: 0 }).success).toBe(false)
+  })
+
+  it('tick stays optional', () => {
+    expect(PlayerInputSchema.safeParse({ ...base, seq: 0 }).success).toBe(true)
+  })
+})
+
 describe('simulateTick is immune to non-finite moveVector', () => {
   it('keeps player position finite when fed an Infinity move vector', () => {
     const state = makeInitialState(1)
