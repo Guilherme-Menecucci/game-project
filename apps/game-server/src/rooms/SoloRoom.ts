@@ -46,6 +46,7 @@ import {
   WeaponStatsSchema,
 } from '../schema/GameSchema.js'
 import { verifyGameToken } from '../lib/gameToken.js'
+import { env, isDevEnv } from '../lib/env.js'
 
 export class SoloRoom extends Room<{ state: GameStateSchema }> {
   // A solo room holds exactly one player. maxClients=1 is the security invariant:
@@ -131,7 +132,8 @@ export class SoloRoom extends Room<{ state: GameStateSchema }> {
 
       // Only weapon-kind upgrades may replace a weapon slot (WR-01 security fix).
       // Passives and evolutions offered this level-up must not corrupt the weapons array.
-      const isDev = process.env['NODE_ENV'] !== 'production'
+      // Allowlist gating via validated env (T-06-02, Pitfall 8) — never bare process.env.
+      const isDev = isDevEnv(env.NODE_ENV)
       const selectedOption = options.find((o) => o.id === upgradeId)
       if (!selectedOption || selectedOption.kind !== 'weapon') {
         if (!(isDev && upgradeId === 'test_upgrade')) return
@@ -451,7 +453,8 @@ export class SoloRoom extends Room<{ state: GameStateSchema }> {
     const options = this.pendingUpgradeOptions.get(sessionId)
     if (!options) return
 
-    const isDev = process.env['NODE_ENV'] !== 'production'
+    // Allowlist gating via validated env (T-06-02, Pitfall 8) — never bare process.env.
+    const isDev = isDevEnv(env.NODE_ENV)
     const isValid =
       options.some((o) => o.id === upgradeId) || (isDev && upgradeId === 'test_upgrade')
     if (!isValid) return
