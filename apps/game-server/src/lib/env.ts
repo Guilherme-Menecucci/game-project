@@ -14,6 +14,10 @@ const envSchema = z.object({
   // denies it (Pitfall 8 — defaulting to 'development' would open backdoors
   // on misconfigured deployments).
   NODE_ENV: z.string().optional(),
+  // Browser origin pinned on matchmake-route CORS in production. No default:
+  // absent means Colyseus default CORS behavior (dev traffic is same-origin
+  // through the Vite proxy).
+  CORS_ORIGIN: z.string().optional(),
 })
 
 const parsed = envSchema.safeParse(process.env)
