@@ -28,3 +28,6 @@ export * from './characterCatalog.js'
 export * from './bossCatalog.js'
 export * from './eliteCatalog.js'
 export * from './runMilestones.js'
+
+// ─── Phase 6 ────────────────────────────────────────────────────────────────
+export * from './coop.js'

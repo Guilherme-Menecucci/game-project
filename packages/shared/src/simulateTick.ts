@@ -9,26 +9,32 @@
  * Diagonal speed normalized to [9900, 10100] sub-units via integer Math.round.
  * Toroidal world wrap: x = ((x % WORLD_W) + WORLD_W) % WORLD_W
  *
- * Tick order (plan 05-06 — 14 steps):
- *   1.  Player movement
+ * Tick order (plan 05-06, step 8.5 added in 06-03):
+ *   1.  Player movement (Phase 6: downed crawl at 30% speed; eliminated skip input)
  *   2.  applyEnemyAI (replaces inline placeholder from 03-02)
  *   3.  spawnEnemies (regular wave spawning)
  *   4.  checkMilestoneSpawns (milestone elites/bosses, alongside spawnEnemies for
  *       spatial/temporal consistency — no-op until elapsedMs crosses a threshold)
- *   5.  autoFire (player projectile creation)
+ *   5.  autoFire (player projectile creation; Phase 6: downed/eliminated skip)
  *   6.  applyProjectileMovement (move all projectiles)
  *   7.  applyCollisions (player proj→enemy, enemy proj→player, boss hits)
  *   8.  applyEnemyContactDamage (enemy overlap → player HP)
+ *   8.5 applyDownedRevive (Phase 6 — coop only, prng-free: downed/revive/
+ *       eliminated transitions. After contact damage so damage dealt this tick
+ *       is visible before the down-transition; no-op when mode !== 'coop')
  *   9.  applyBossAI (boss movement + D-19 telegraph/attack state machine — no-op
  *       while bosses is empty; called after contact damage so boss attack this tick
  *       is visible before defeat detection runs)
- *   10. applyGemCollection (attract + snap-collect)
- *   11. applyPickupCollection (proximity collection)
+ *   10. applyGemCollection (attract + snap-collect; Phase 6: eliminated excluded)
+ *   11. applyPickupCollection (proximity collection; Phase 6: eliminated excluded)
  *   12. applyLevelUp (XP threshold check)
- *   13. Defeat detection: if any player.hp <= 0 and result !== 'defeated',
- *       set result='defeated'. Does NOT halt the pipeline — endless mode (GAME-15)
- *       keeps ticking; SoloRoom (plan 05-07) decides what to do with the flag.
- *       'survived' is set exclusively by SoloRoom on disconnect, never here.
+ *   13. Defeat detection — mode-gated (Phase 6):
+ *       solo: if any player.hp <= 0 and result !== 'defeated', set
+ *       result='defeated' (byte-identical to Phase 5).
+ *       coop: result='defeated' only when EVERY player is downed || eliminated.
+ *       Does NOT halt the pipeline — endless mode (GAME-15) keeps ticking; the
+ *       room decides what to do with the flag. 'survived' is set exclusively
+ *       by the room on disconnect, never here.
  */
 import type {
   PlainGameState,
@@ -56,6 +62,7 @@ import {
   applyLevelUp,
   applyPickupCollection,
 } from './weapons.js'
+import { applyDownedRevive, DOWNED_SPEED_MULT } from './coop.js'
 
 export { WORLD_W, WORLD_H }
 export const TICK_SEC = 1 / 20
@@ -113,6 +120,12 @@ export function cloneState(state: PlainGameState): PlainGameState {
     bosses,
     milestonesSpawned: { ...(state.milestonesSpawned ?? {}) },
     result: state.result,
+    // Phase 6: top-level scalars need explicit lines here — a missed top-level
+    // field silently disappears after one tick (Pitfall 1). Player-level Phase 6
+    // fields (downed/bleedOutRemainingMs/reviveProgressTicks/eliminated) are
+    // covered by the `...p` spread above.
+    mode: state.mode,
+    playerCount: state.playerCount,
   }
 }
 
@@ -139,6 +152,10 @@ export function simulateTick(
 
   // Step 1. Player movement
   for (const [playerId, player] of newState.players) {
+    // Phase 6: eliminated players ignore input entirely (ROOM-09) — skip
+    // before the input is even read.
+    if (player.eliminated) continue
+
     const rawInput = inputs.get(playerId)
 
     // Validate input via PlayerInputSchema (T-3-01)
@@ -160,7 +177,10 @@ export function simulateTick(
 
     // Normalize to integer sub-unit displacement
     const mag = Math.sqrt(dx * dx + dy * dy)
-    const speed = player.speed ?? SPEED_SUBUNITS
+    const baseSpeed = player.speed ?? SPEED_SUBUNITS
+    // Phase 6: downed players crawl at 30% speed (ROOM-07) — integer math via
+    // Math.round for determinism.
+    const speed = player.downed ? Math.round(baseSpeed * DOWNED_SPEED_MULT) : baseSpeed
     const vx = Math.round((dx * speed) / mag)
     const vy = Math.round((dy * speed) / mag)
 
@@ -194,6 +214,12 @@ export function simulateTick(
   // Step 8. Enemy contact damage to players
   newState = applyEnemyContactDamage(newState)
 
+  // Step 8.5. Downed/revive/eliminated transitions (Phase 6, coop only).
+  //    No-op when mode !== 'coop'. Placed after contact damage so damage dealt
+  //    this tick is visible before the down-transition. Draws NOTHING from the
+  //    prng — pure state transform (determinism Pitfall 2).
+  newState = applyDownedRevive(newState)
+
   // Step 9. Boss AI: movement + D-19 telegraph/attack state machine.
   //    No-op while state.bosses is empty. Called after contact damage so
   //    boss attack this tick is visible before defeat detection (step 13).
@@ -209,14 +235,29 @@ export function simulateTick(
   // Step 12. Level-up check
   newState = applyLevelUp(newState)
 
-  // Step 13. Defeat detection — set result='defeated' the tick any player's hp drops
-  //     to 0. Does NOT halt the pipeline (GAME-15 endless mode). Never sets
-  //     'survived' — that is set exclusively by SoloRoom on disconnect (05-07).
+  // Step 13. Defeat detection — mode-gated (Phase 6). Does NOT halt the
+  //     pipeline (GAME-15 endless mode). Never sets 'survived' — that is set
+  //     exclusively by the room on disconnect.
   if (newState.result !== 'defeated') {
-    for (const player of newState.players.values()) {
-      if (player.hp <= 0) {
+    if (newState.mode === 'coop') {
+      // Coop: defeated only when EVERY player is downed or eliminated.
+      let allDown = newState.players.size > 0
+      for (const player of newState.players.values()) {
+        if (!player.downed && !player.eliminated) {
+          allDown = false
+          break
+        }
+      }
+      if (allDown) {
         newState.result = 'defeated'
-        break
+      }
+    } else {
+      // Solo: byte-identical Phase 5 rule — any player at hp <= 0 defeats.
+      for (const player of newState.players.values()) {
+        if (player.hp <= 0) {
+          newState.result = 'defeated'
+          break
+        }
       }
     }
   }

@@ -69,8 +69,9 @@ function toroidal(x: number, size: number): number {
 
 /**
  * Compute toroidal delta (shortest path on a torus): b - a, adjusted for wrap.
+ * Exported for Phase 6: coop revive radius (coop.ts) + centroid camera (06-12).
  */
-function toroidalDelta(a: number, b: number, size: number): number {
+export function toroidalDelta(a: number, b: number, size: number): number {
   let delta = b - a
   if (Math.abs(delta) > size / 2) {
     delta = delta > 0 ? delta - size : delta + size
@@ -80,11 +81,59 @@ function toroidalDelta(a: number, b: number, size: number): number {
 
 /**
  * Compute toroidal squared distance between two points.
+ * Exported for Phase 6: coop revive radius (coop.ts) + centroid camera (06-12).
  */
-function toroidalDistSq(ax: number, ay: number, bx: number, by: number): number {
+export function toroidalDistSq(ax: number, ay: number, bx: number, by: number): number {
   const dx = toroidalDelta(ax, bx, WORLD_W)
   const dy = toroidalDelta(ay, by, WORLD_H)
   return dx * dx + dy * dy
+}
+
+/**
+ * Phase 6 (ROOM-07/09, locked OQ1): players that enemies/bosses/enemy
+ * projectiles may target or damage — neither downed nor eliminated. Downed
+ * players take no damage: bleed-out is the ONLY death clock while downed
+ * (camping a body would make revive impossible). Returns the input map
+ * unchanged when nothing is excluded (solo fast path — zero drift from
+ * Phase 5, where the fields are never set).
+ */
+export function targetablePlayers(
+  players: Map<string, PlainPlayerState>
+): Map<string, PlainPlayerState> {
+  let anyExcluded = false
+  for (const p of players.values()) {
+    if (p.downed || p.eliminated) {
+      anyExcluded = true
+      break
+    }
+  }
+  if (!anyExcluded) return players
+  const out = new Map<string, PlainPlayerState>()
+  for (const [id, p] of players) {
+    if (!p.downed && !p.eliminated) out.set(id, p)
+  }
+  return out
+}
+
+/**
+ * Phase 6 (ROOM-09): players that may collect gems/pickups — everyone except
+ * eliminated. Downed players still collect (locked in 06-03 tests: simpler and
+ * harmless — a crawling player hoovering nearby gems keeps individual XP flowing).
+ */
+function collectingPlayers(players: Map<string, PlainPlayerState>): Map<string, PlainPlayerState> {
+  let anyExcluded = false
+  for (const p of players.values()) {
+    if (p.eliminated) {
+      anyExcluded = true
+      break
+    }
+  }
+  if (!anyExcluded) return players
+  const out = new Map<string, PlainPlayerState>()
+  for (const [id, p] of players) {
+    if (!p.eliminated) out.set(id, p)
+  }
+  return out
 }
 
 /**
@@ -186,6 +235,9 @@ export function autoFire(
   let killsDelta = 0
 
   for (const [playerId, player] of state.players) {
+    // Phase 6: downed players do not fire (locked decision); eliminated never fire.
+    if (player.downed || player.eliminated) continue
+
     const playerWeapons =
       player.weapons && player.weapons.length > 0 ? player.weapons : ['magic_wand:1']
 
@@ -438,8 +490,12 @@ export function applyEnemyAI(state: PlainGameState): PlainGameState {
   const newProjectiles = new Map(state.projectiles)
   let projChanged = false
 
+  // Phase 6: enemies only ever target alive players (locked OQ1). With no
+  // targetable player, enemies hold position and ranged do not fire.
+  const targets = targetablePlayers(state.players)
+
   for (const [enemyId, enemy] of state.enemies) {
-    const player = nearestPlayer(enemy.x, enemy.y, state.players)
+    const player = nearestPlayer(enemy.x, enemy.y, targets)
     if (player === null) {
       newEnemies.set(enemyId, { ...enemy })
       continue
@@ -544,6 +600,9 @@ export function applyBossAI(state: PlainGameState): PlainGameState {
   const newPlayers = new Map(state.players)
   let playersChanged = false
 
+  // Phase 6: bosses only ever target/damage alive players (locked OQ1).
+  const targets = targetablePlayers(state.players)
+
   for (const [bossId, boss] of bosses) {
     const telegraphTick = boss.telegraphTick ?? 0
     const nextTelegraphTick = (telegraphTick + 1) % 100
@@ -561,8 +620,8 @@ export function applyBossAI(state: PlainGameState): PlainGameState {
     let newY = boss.y
 
     if (telegraphState === 'idle') {
-      // Move toward nearest player at boss.speed
-      const target = nearestPlayer(boss.x, boss.y, state.players)
+      // Move toward nearest targetable player at boss.speed
+      const target = nearestPlayer(boss.x, boss.y, targets)
       if (target !== null) {
         const dx = toroidalDelta(boss.x, target.x, WORLD_W)
         const dy = toroidalDelta(boss.y, target.y, WORLD_H)
@@ -588,6 +647,8 @@ export function applyBossAI(state: PlainGameState): PlainGameState {
         const attackRadius = ENEMY_CONTACT_RADIUS * 3
         const attackRadiusSq = attackRadius * attackRadius
         for (const [playerId, player] of newPlayers) {
+          // Phase 6: downed/eliminated players take no boss damage (locked OQ1).
+          if (player.downed || player.eliminated) continue
           const distSq = toroidalDistSq(boss.x, boss.y, player.x, player.y)
           if (distSq <= attackRadiusSq) {
             const updatedHp = Math.max(0, player.hp - attackDamage)
@@ -600,7 +661,7 @@ export function applyBossAI(state: PlainGameState): PlainGameState {
         // at midpoint toward nearest player (D-19 charge vector approximation).
         const attackRadius = ENEMY_CONTACT_RADIUS * 2
         const attackRadiusSq = attackRadius * attackRadius
-        const chargeTarget = nearestPlayer(boss.x, boss.y, state.players)
+        const chargeTarget = nearestPlayer(boss.x, boss.y, targets)
         const midX = chargeTarget
           ? toroidal(
               boss.x + Math.round(toroidalDelta(boss.x, chargeTarget.x, WORLD_W) / 2),
@@ -615,6 +676,8 @@ export function applyBossAI(state: PlainGameState): PlainGameState {
           : boss.y
 
         for (const [playerId, player] of newPlayers) {
+          // Phase 6: downed/eliminated players take no boss damage (locked OQ1).
+          if (player.downed || player.eliminated) continue
           const distSqCenter = toroidalDistSq(boss.x, boss.y, player.x, player.y)
           const distSqMid = toroidalDistSq(midX, midY, player.x, player.y)
           if (distSqCenter <= attackRadiusSq || distSqMid <= attackRadiusSq) {
@@ -851,8 +914,10 @@ export function applyCollisions(state: PlainGameState, prng: Prng): PlainGameSta
 
   // ── Pass 2: Enemy projectiles vs players ──
   if (state.players.size > 0) {
+    // Phase 6: enemy projectiles never damage downed/eliminated players
+    // (locked OQ1) — build the broadphase grid from targetable players only.
     const playerGrid = new UniformGrid()
-    for (const [id, player] of newPlayers) {
+    for (const [id, player] of targetablePlayers(newPlayers)) {
       playerGrid.insert(id, player.x, player.y)
     }
 
@@ -907,8 +972,10 @@ export function applyCollisions(state: PlainGameState, prng: Prng): PlainGameSta
 export function applyEnemyContactDamage(state: PlainGameState): PlainGameState {
   if (state.enemies.size === 0 || state.players.size === 0) return state
 
+  // Phase 6: downed/eliminated players take no contact damage — bleed-out is
+  // the ONLY death clock while downed (locked OQ1).
   const playerGrid = new UniformGrid()
-  for (const [id, player] of state.players) {
+  for (const [id, player] of targetablePlayers(state.players)) {
     playerGrid.insert(id, player.x, player.y)
   }
 
@@ -941,13 +1008,18 @@ export function applyEnemyContactDamage(state: PlainGameState): PlainGameState {
 export function applyGemCollection(state: PlainGameState): PlainGameState {
   if (state.gems.size === 0 || state.players.size === 0) return state
 
+  // Phase 6: gems attract/collect for everyone except eliminated players —
+  // downed players still collect (individual XP stays individual, ROOM-09).
+  const collectors = collectingPlayers(state.players)
+  if (collectors.size === 0) return state
+
   const newGems = new Map(state.gems)
   const newPlayers = new Map(state.players)
   let changed = false
 
   for (const [gemId, gem] of state.gems) {
-    // Find nearest player
-    const player = nearestPlayer(gem.x, gem.y, state.players)
+    // Find nearest collecting player
+    const player = nearestPlayer(gem.x, gem.y, collectors)
     if (player === null) continue
 
     const dx = toroidalDelta(gem.x, player.x, WORLD_W)
@@ -1030,6 +1102,9 @@ export function applyPickupCollection(state: PlainGameState): PlainGameState {
   const radiusSq = PICKUP_COLLECT_RADIUS * PICKUP_COLLECT_RADIUS
 
   for (const [playerId, player] of state.players) {
+    // Phase 6: eliminated players collect nothing (ROOM-09); downed still collect.
+    if (player.eliminated) continue
+
     const updatedPlayer = newPlayers.get(playerId) ?? { ...player }
 
     for (const [pickupId, pickup] of newPickups) {

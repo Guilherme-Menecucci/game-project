@@ -36,6 +36,20 @@ export type PlainPlayerState = {
   // (string '0'-'5'), NOT weapon id — survives evolution/slot replacement (D-21).
   // Default {}.
   weaponStats?: Record<string, { totalDamage: number; acquiredAtMs: number }>
+  // Phase 6: coop downed state (ROOM-07). Set inside applyDownedRevive when hp
+  // hits 0 in coop mode; hp stays 0 while downed. Default undefined (never set
+  // in solo mode).
+  downed?: boolean
+  // Phase 6: bleed-out clock in ms, 30_000 → 0 while downed (ROOM-07).
+  // Decrements 50/tick inside the sim — the ONLY death clock while downed.
+  bleedOutRemainingMs?: number
+  // Phase 6: consecutive ticks an alive teammate has stayed within
+  // REVIVE_RADIUS (ROOM-08). Resets to 0 on any gap; revive at 60 (3s).
+  reviveProgressTicks?: number
+  // Phase 6: bleed-out expired — spectator (ROOM-09). Eliminated players stay
+  // in state.players (removing would shift scaling and HUD) and are skipped by
+  // every sim pass.
+  eliminated?: boolean
 }
 
 export type PlainEnemyState = {
@@ -109,9 +123,17 @@ export type PlainGameState = {
   // 'elite2', 'elite3', 'elite4', 'biomeBoss', 'finalBoss'. Default {}.
   milestonesSpawned?: Record<string, boolean>
   // Phase 5: run outcome (GAME-12). Set to 'defeated' inside simulateTick
-  // when any player's hp reaches 0. 'survived' is set by SoloRoom on
-  // disconnect/leave in a later wave, never inside simulateTick.
+  // when any player's hp reaches 0 (solo) or when EVERY player is downed or
+  // eliminated (coop — Phase 6). 'survived' is set by the room on
+  // disconnect/leave, never inside simulateTick.
   result?: 'survived' | 'defeated' | undefined
+  // Phase 6: sim mode — gates the downed/revive pipeline and coop defeat rule.
+  // Set by the room at creation. Default 'solo' (makeInitialState) so the solo
+  // path stays byte-identical to Phase 5.
+  mode?: 'solo' | 'coop'
+  // Phase 6: player count captured at run start (frozen across disconnects —
+  // OQ2). Drives difficulty scaling (ROOM-10). Default 1.
+  playerCount?: number
 }
 
 /**
@@ -153,5 +175,10 @@ export function makeInitialState(seed: number): PlainGameState {
     bosses: new Map(),
     milestonesSpawned: {},
     result: undefined,
+    // Phase 6: explicit documented defaults (Pitfall 1 — makeInitialState
+    // coverage). Rooms override to 'coop' / N at run start. Player downed
+    // fields stay undefined until the pipeline sets them.
+    mode: 'solo',
+    playerCount: 1,
   }
 }
