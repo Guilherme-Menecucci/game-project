@@ -13,17 +13,18 @@
     "@colyseus/schema": "4.0.26",
     "@colyseus/tools": "0.17.19",
     "@colyseus/ws-transport": "0.17.13",
+    "@game/shared": "workspace:*",
     "express": "4.21.2",
+    "helmet": "8.2.0",
     "jsonwebtoken": "9.0.2",
-    "zod": "4.4.3",
-    "@game/shared": "workspace:*"
+    "zod": "4.4.3"
   },
   "devDependencies": {
     "@colyseus/testing": "0.17.11",
     "@types/jsonwebtoken": "9.0.9",
-    "tsx": "4.22.4",
-    "vitest": "4.1.8",
     "@vitest/coverage-v8": "4.1.8",
-    "typescript": "6.0.3"
+    "tsx": "4.22.4",
+    "typescript": "6.0.3",
+    "vitest": "4.1.8"
   }
 }
