@@ -2,6 +2,8 @@ import { readdirSync } from 'fs'
 import { fileURLToPath, pathToFileURL } from 'url'
 import { join } from 'path'
 import Fastify, { type FastifyInstance } from 'fastify'
+import helmet from '@fastify/helmet'
+import cors from '@fastify/cors'
 import { registerCookie } from './plugins/cookie.js'
 import { registerJwt } from './plugins/jwt.js'
 import { registerRateLimit } from './plugins/rate-limit.js'
@@ -26,9 +28,19 @@ export async function buildApp(): Promise<FastifyInstance> {
   })
 
   // Plugin registration order is critical (Pattern H):
-  // 1. cookie FIRST — decorates request.cookies
+  // 0. helmet + cors FIRST — HTTP-layer hardening applies to every response
+  //    before any auth machinery runs (Phase 6 Wave 0, T-06-03 mitigate)
+  // 1. cookie — decorates request.cookies
   // 2. jwt AFTER — reads from request.cookies['session']
   // 3. rate-limit AFTER
+  // helmet defaults are safe for a JSON-only API (Pitfall 6).
+  await app.register(helmet)
+  // origin MUST be the array form: a static string would echo the configured
+  // origin on EVERY response (see @fastify/cors getAccessControlAllowOriginHeader);
+  // the array form reflects the origin only when it matches — disallowed origins
+  // get no Access-Control-Allow-Origin header at all.
+  // credentials: true is required for the HttpOnly session cookie flow.
+  await app.register(cors, { origin: [env.CORS_ORIGIN], credentials: true })
   await registerCookie(app)
   await registerJwt(app)
   await registerRateLimit(app, redis)

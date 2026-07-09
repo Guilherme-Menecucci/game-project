@@ -8,6 +8,9 @@ const envSchema = z.object({
   RESEND_API_KEY: z.string(),
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   BASE_URL: z.url().default('http://localhost:5173'),
+  // Browser origin allowed by CORS (credentials mode — HttpOnly session cookie).
+  // Dev default = Vite dev server origin; production MUST override via env.
+  CORS_ORIGIN: z.string().optional().default('http://localhost:5173'),
 })
 
 // Validate at module load time — fails fast at startup, not per-request.
