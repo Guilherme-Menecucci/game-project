@@ -29,18 +29,27 @@ describe('verifyGameToken displayName', () => {
     const payload = verifyGameToken(token)
     expect(payload.userId).toBe(userId)
     expect(payload.displayName).toBe(fallbackDisplayName(userId))
-    expect(payload.displayName).toBe('Guest_abcde')
+    expect(payload.displayName).toBe('Player_abcde')
   })
 
   it('falls back when the claim is present but empty or not a string', () => {
     const userId = 'zyxwv-user'
     const empty = jwt.sign({ userId, type: 'game', displayName: '' }, SECRET, { expiresIn: '5m' })
-    expect(verifyGameToken(empty).displayName).toBe('Guest_zyxwv')
+    expect(verifyGameToken(empty).displayName).toBe('Player_zyxwv')
 
     const wrongType = jwt.sign({ userId, type: 'game', displayName: 42 }, SECRET, {
       expiresIn: '5m',
     })
-    expect(verifyGameToken(wrongType).displayName).toBe('Guest_zyxwv')
+    expect(verifyGameToken(wrongType).displayName).toBe('Player_zyxwv')
+  })
+
+  it('does not throw when a correctly-signed token has no userId claim', () => {
+    // Unreachable without JWT_SECRET, but the fallback must never turn a
+    // malformed-but-signed token into a TypeError.
+    const token = jwt.sign({ type: 'game' }, SECRET, { expiresIn: '5m' })
+    const payload = verifyGameToken(token)
+    expect(payload.userId).toBe('')
+    expect(payload.displayName).toBe('Player_')
   })
 
   it('still rejects non-game token types', () => {

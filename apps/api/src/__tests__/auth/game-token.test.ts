@@ -191,7 +191,7 @@ describe('GET /auth/game-token', () => {
       expect(response.statusCode).toBe(200)
       const payload = decodePayload(response.json<{ token: string }>().token)
       expect(payload['displayName']).toBe(fallbackDisplayName(userId))
-      expect(payload['displayName']).toBe('Guest_abcde')
+      expect(payload['displayName']).toBe('Player_abcde')
       expect((payload['displayName'] as string).length).toBeGreaterThan(0)
     })
   })

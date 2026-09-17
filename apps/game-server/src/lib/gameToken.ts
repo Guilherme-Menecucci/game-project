@@ -32,7 +32,7 @@ export interface GameTokenPayload {
  */
 export function verifyGameToken(token: string): GameTokenPayload {
   const decoded = jwt.verify(token, env.JWT_SECRET) as {
-    userId: string
+    userId?: unknown
     type: string
     displayName?: unknown
     iat: number
@@ -43,10 +43,14 @@ export function verifyGameToken(token: string): GameTokenPayload {
     throw new Error('Invalid token type: expected game')
   }
 
+  // Guard the fallback input: a correctly-signed token with no userId claim
+  // must not turn into a TypeError here (pre-Phase 6 behavior returned it as-is).
+  const userId = typeof decoded.userId === 'string' ? decoded.userId : ''
+
   const displayName =
     typeof decoded.displayName === 'string' && decoded.displayName.length > 0
       ? decoded.displayName
-      : fallbackDisplayName(decoded.userId)
+      : fallbackDisplayName(userId)
 
-  return { userId: decoded.userId, type: 'game', displayName }
+  return { userId, type: 'game', displayName }
 }
