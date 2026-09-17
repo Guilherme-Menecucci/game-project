@@ -70,3 +70,58 @@ export const CharacterSelectSchema = z.object({
   weaponId: z.enum(['magic_wand', 'garlic', 'knife', 'bible']),
 })
 export type CharacterSelect = z.infer<typeof CharacterSelectSchema>
+
+// ─── Phase 6 Schemas ──────────────────────────────────────────────────────────
+// Co-op room wire contracts (ROOM-01/04/11). Every CoopRoom message crosses
+// the client → server trust boundary; the server validates each payload with
+// safeParse and silently drops failures (T-06-09). These schemas are the
+// single source of truth for both CoopRoom handlers (06-08) and the client
+// lobby/HUD screens (06-11).
+//
+// Wire rule: no-data messages (start_run, vote_pause, vote_resume) MUST be
+// sent as `room.send('start_run', {})`. z.object({}) rejects `undefined`, and
+// Colyseus delivers `undefined` to the handler when the message argument is
+// omitted — so a bare `room.send('start_run')` is silently dropped.
+//
+// select_class reuses CharacterSelectSchema above (same loadout shape as the
+// Phase 5 character_select join option) — no new schema.
+
+/** `ready` message: toggles the sender's lobby ready flag (ROOM-04). */
+export const ReadySchema = z.object({
+  ready: z.boolean(),
+})
+export type Ready = z.infer<typeof ReadySchema>
+
+/**
+ * `start_run` message: host asks the room to leave the lobby. Carries no
+ * data — the server derives everything (host identity, ready state, seeds)
+ * from its own state so nothing here can be tampered with.
+ */
+export const StartRunSchema = z.object({})
+export type StartRun = z.infer<typeof StartRunSchema>
+
+/** `vote_pause` message: sender casts a pause vote. No data (server-derived). */
+export const VotePauseSchema = z.object({})
+export type VotePause = z.infer<typeof VotePauseSchema>
+
+/** `vote_resume` message: sender casts a resume vote. No data (server-derived). */
+export const VoteResumeSchema = z.object({})
+export type VoteResume = z.infer<typeof VoteResumeSchema>
+
+/**
+ * `create` join options for CoopRoom. `token` is the 5-minute game JWT
+ * (verified in static onAuth — identity and displayName come from the token,
+ * never from a client-sent name, T-06-08). `isPrivate` hides the room from
+ * public matchmaking; omitted means public.
+ */
+export const CoopCreateOptionsSchema = z.object({
+  token: z.string().min(1),
+  isPrivate: z.boolean().optional(),
+})
+export type CoopCreateOptions = z.infer<typeof CoopCreateOptionsSchema>
+
+/** `joinById` / `joinByCode` options for CoopRoom — game JWT only. */
+export const CoopJoinOptionsSchema = z.object({
+  token: z.string().min(1),
+})
+export type CoopJoinOptions = z.infer<typeof CoopJoinOptionsSchema>
