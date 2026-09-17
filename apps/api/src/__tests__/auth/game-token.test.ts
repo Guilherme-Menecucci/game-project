@@ -6,6 +6,9 @@
  * 2. 200 valid guest session returns game JWT
  * 3. Returned token payload has { userId, type: 'game' } and short expiry
  * 4. Rate-limit: 429 on 11th request within window
+ * 5. Phase 6 (ROOM-11 / T-06-08): payload carries a server-attested displayName —
+ *    guest session name, registered account name (DB lookup), or the
+ *    deterministic fallback label when the session has none. Never empty.
  *
  * RED phase: route doesn't exist yet → tests fail with 404.
  * GREEN phase: plan 03-03 creates GET /auth/game-token route.
@@ -18,8 +21,12 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import type { FastifyInstance } from 'fastify'
+import { eq } from 'drizzle-orm'
+import { fallbackDisplayName } from '@game/shared'
 import { buildApp } from '../../server.js'
-import { signGuestJwt } from '../../lib/auth.js'
+import { db } from '../../db/client.js'
+import { accounts } from '../../db/schema.js'
+import { signGuestJwt, signRegisteredJwt } from '../../lib/auth.js'
 
 // IP generation: use process.pid for cross-run uniqueness (per STATE.md decision)
 const runId = process.pid % 65536
@@ -32,6 +39,15 @@ function testIp(offset: number): string {
 
 // Dedicated rate-limit test IP — far from functional test IPs
 const RATE_LIMIT_TEST_IP = `10.5.${(oct3 + 1) % 256}.${oct4Base}`
+
+/** Decode a JWT payload without verifying the signature (structure checks only). */
+function decodePayload(token: string): Record<string, unknown> {
+  const [, payloadB64] = token.split('.')
+  return JSON.parse(Buffer.from(payloadB64, 'base64url').toString('utf-8')) as Record<
+    string,
+    unknown
+  >
+}
 
 describe('GET /auth/game-token', () => {
   let app: FastifyInstance
@@ -86,11 +102,7 @@ describe('GET /auth/game-token', () => {
     const { token } = response.json<{ token: string }>()
 
     // Decode the JWT payload (no signature verification — just check structure)
-    const [, payloadB64] = token.split('.')
-    const payload = JSON.parse(Buffer.from(payloadB64, 'base64url').toString('utf-8')) as Record<
-      string,
-      unknown
-    >
+    const payload = decodePayload(token)
 
     expect(typeof payload['userId']).toBe('string')
     expect(payload['type']).toBe('game')
@@ -100,6 +112,88 @@ describe('GET /auth/game-token', () => {
     const exp = payload['exp'] as number
     expect(exp).toBeGreaterThan(now)
     expect(exp).toBeLessThanOrEqual(now + 300 + 5) // 5s buffer for test latency
+  })
+
+  describe('displayName claim (Phase 6, ROOM-11 / T-06-08)', () => {
+    const registeredEmail = `game-token-${process.pid}@example.com`
+    const registeredName = 'captain_gt'
+    let registeredUserId = ''
+
+    beforeAll(async () => {
+      // Seed a real account row so the registered path can resolve the name.
+      // Delete first so a crashed prior run cannot leave a duplicate email.
+      await db.delete(accounts).where(eq(accounts.email, registeredEmail))
+      const inserted = await db
+        .insert(accounts)
+        .values({ email: registeredEmail, passwordHash: 'x', displayName: registeredName })
+        .returning({ id: accounts.id })
+      registeredUserId = inserted[0].id
+    })
+
+    afterAll(async () => {
+      await db.delete(accounts).where(eq(accounts.email, registeredEmail))
+    })
+
+    it('guest session: displayName equals the session displayName', async () => {
+      const userId = 'guest-user-id-abcde'
+      const guestToken = signGuestJwt(app, userId, 'Guest_efgh')
+      const response = await app.inject({
+        method: 'GET',
+        url: '/auth/game-token',
+        remoteAddress: testIp(4),
+        headers: { cookie: `session=${guestToken}` },
+      })
+      expect(response.statusCode).toBe(200)
+      const payload = decodePayload(response.json<{ token: string }>().token)
+      expect(payload['displayName']).toBe('Guest_efgh')
+      // Existing claims are untouched
+      expect(payload['userId']).toBe(userId)
+      expect(payload['type']).toBe('game')
+      expect(payload['role']).toBeUndefined()
+      expect(payload['isGuest']).toBeUndefined()
+    })
+
+    it('registered session: displayName equals the account display name', async () => {
+      const sessionToken = signRegisteredJwt(app, registeredUserId)
+      const response = await app.inject({
+        method: 'GET',
+        url: '/auth/game-token',
+        remoteAddress: testIp(5),
+        headers: { cookie: `session=${sessionToken}` },
+      })
+      expect(response.statusCode).toBe(200)
+      const payload = decodePayload(response.json<{ token: string }>().token)
+      expect(payload['displayName']).toBe(registeredName)
+      expect(payload['userId']).toBe(registeredUserId)
+      expect(payload['type']).toBe('game')
+
+      // Expiry unchanged by the new claim: still 5 minutes
+      const now = Math.floor(Date.now() / 1000)
+      const exp = payload['exp'] as number
+      expect(exp).toBeGreaterThan(now)
+      expect(exp).toBeLessThanOrEqual(now + 300 + 5)
+    })
+
+    it('guest session without a displayName claim: deterministic fallback, never empty', async () => {
+      const userId = 'abcdef12-3456-7890-abcd-ef1234567890'
+      // Legacy/edge guest session minted without displayName (signGuestJwt always
+      // sets one today, so build the cookie directly).
+      const sessionToken = app.jwt.sign(
+        { userId, role: 'guest', isGuest: true },
+        { expiresIn: '1d' }
+      )
+      const response = await app.inject({
+        method: 'GET',
+        url: '/auth/game-token',
+        remoteAddress: testIp(6),
+        headers: { cookie: `session=${sessionToken}` },
+      })
+      expect(response.statusCode).toBe(200)
+      const payload = decodePayload(response.json<{ token: string }>().token)
+      expect(payload['displayName']).toBe(fallbackDisplayName(userId))
+      expect(payload['displayName']).toBe('Guest_abcde')
+      expect((payload['displayName'] as string).length).toBeGreaterThan(0)
+    })
   })
 
   it('rate limit: 429 on 11th request within window', async () => {
