@@ -1,0 +1,235 @@
+/* LobbyScreen — co-op lobby / ready gate (06-UI-SPEC §5).
+   Loadout-card styling is composed from SoloRunStartScreen.module.css so the
+   lobby slots and class picker stay pixel-identical to the Phase 5 cards
+   without duplicating their rules. Tokens + spacing scale only. */
+.screen {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow-y: auto;
+  background: var(--color-bg);
+  padding: var(--space-2xl) var(--space-md);
+}
+
+.layout {
+  position: relative;
+  width: 100%;
+  max-width: 848px; /* 4 × 200px loadout-card slots + 3 × --space-md gaps */
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-lg);
+}
+
+.header {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+}
+
+.heading {
+  font-size: var(--text-heading);
+  font-weight: 600;
+  color: var(--color-text);
+  margin: 0;
+  line-height: 1.2;
+}
+
+.mutedText {
+  font-size: var(--text-label);
+  color: var(--color-text-muted);
+  margin: 0;
+  line-height: 1.4;
+}
+
+/* Host-transfer toast (Label) — top-center above the header */
+.toast {
+  position: absolute;
+  top: calc(-1 * var(--space-2xl));
+  left: 50%;
+  transform: translateX(-50%);
+  margin: 0;
+  padding: var(--space-xs) var(--space-md);
+  border-radius: 999px;
+  background: var(--color-hud-backing);
+  border: 1px solid var(--color-border);
+  color: var(--color-text);
+  font-size: var(--text-label);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* ─── Player slots (loadout-card dimensions) ─── */
+.slotRow {
+  display: flex;
+  gap: var(--space-md);
+}
+
+.slot {
+  composes: loadoutCard from './SoloRunStartScreen.module.css';
+  cursor: default;
+  min-height: 140px;
+}
+
+.slotEmpty {
+  composes: loadoutCard from './SoloRunStartScreen.module.css';
+  cursor: default;
+  min-height: 140px;
+  border-style: dashed;
+  background: transparent;
+  align-items: center;
+  justify-content: center;
+}
+
+.slotNameRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  min-width: 0;
+}
+
+.playerName {
+  font-size: var(--text-label);
+  font-weight: 600;
+  color: var(--color-text);
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hostChip {
+  flex-shrink: 0;
+  padding: 0 var(--space-xs);
+  border-radius: 4px;
+  background: var(--color-border);
+  color: var(--color-text);
+  font-size: var(--text-label);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.pill {
+  align-self: flex-start;
+  margin-top: auto;
+  padding: 0 var(--space-sm);
+  border-radius: 999px;
+  border: 1px solid currentColor;
+  font-size: var(--text-label);
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.pillReady {
+  color: var(--color-ready);
+}
+
+.pillNotReady {
+  color: var(--color-not-ready);
+}
+
+/* ─── Class picker (reused Phase 5 loadout cards) ─── */
+.loadoutCardRow {
+  composes: loadoutCardRow from './SoloRunStartScreen.module.css';
+}
+
+.loadoutCard {
+  composes: loadoutCard from './SoloRunStartScreen.module.css';
+}
+
+.loadoutCard:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.loadoutCardSelected {
+  composes: loadoutCardSelected from './SoloRunStartScreen.module.css';
+}
+
+.classCardName {
+  composes: classCardName from './SoloRunStartScreen.module.css';
+}
+
+.loadoutWeaponName {
+  composes: loadoutWeaponName from './SoloRunStartScreen.module.css';
+}
+
+/* ─── Footer: Leave Lobby bottom-left, Ready/Start bottom-right ─── */
+.footer {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+}
+
+.footerActions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.primaryBtn {
+  min-width: 160px;
+  min-height: 44px;
+  padding: 0 var(--space-md);
+  background: var(--color-accent);
+  color: var(--color-text);
+  border: none;
+  border-radius: 4px;
+  font-family: inherit;
+  font-size: var(--text-body);
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 150ms ease;
+}
+
+.primaryBtn:hover:not(:disabled) {
+  background: var(--color-accent-hover);
+}
+
+.primaryBtn:disabled {
+  background: var(--color-border);
+  color: var(--color-text-muted);
+  cursor: not-allowed;
+}
+
+/* "Unready" — surface style once the local player is ready */
+.unreadyBtn {
+  min-width: 160px;
+  min-height: 44px;
+  padding: 0 var(--space-md);
+  background: var(--color-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  font-family: inherit;
+  font-size: var(--text-body);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.unreadyBtn:hover:not(:disabled) {
+  border-color: var(--color-accent);
+}
+
+.textBtn {
+  background: transparent;
+  border: none;
+  color: var(--color-text-muted);
+  font-family: inherit;
+  font-size: var(--text-label);
+  font-weight: 600;
+  min-height: 44px;
+  padding: 0 var(--space-sm);
+  cursor: pointer;
+}
+
+.textBtn:hover {
+  color: var(--color-text);
+}
