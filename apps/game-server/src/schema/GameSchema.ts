@@ -45,6 +45,22 @@ export class PlayerSchema extends Schema {
   @type('uint16') declare damageMultiplier: number // scaled x100 (1.2 -> 120); client divides by 100
   @type('uint16') declare fireRateMultiplier: number // scaled x100 (0.9 -> 90); client divides by 100
   @type({ map: WeaponStatsSchema }) weaponStats = new MapSchema<WeaponStatsSchema>() // keyed by slot index '0'-'5' (D-21)
+  // Phase 6 (06-09): co-op downed/revive/eliminated fields mirrored one-way from
+  // the sim (applyDownedRevive, plan 06-03). No client message can set them
+  // (ROOM-12). Solo always carries the defaults. Explicitly initialized in the
+  // constructor so the very first serialization includes them (Phase 5 lesson).
+  @type('boolean') declare downed: boolean // ROOM-07: hp 0 in co-op -> crawling
+  @type('uint16') declare bleedOutRemainingMs: number // 30_000 -> 0 while downed (clamped 0..65535)
+  @type('uint8') declare reviveProgressTicks: number // 0..60 consecutive in-radius ticks (clamped 0..255)
+  @type('boolean') declare eliminated: boolean // ROOM-09: spectator; entry stays in players
+
+  constructor() {
+    super()
+    this.downed = false
+    this.bleedOutRemainingMs = 0
+    this.reviveProgressTicks = 0
+    this.eliminated = false
+  }
 }
 
 export class EnemySchema extends Schema {

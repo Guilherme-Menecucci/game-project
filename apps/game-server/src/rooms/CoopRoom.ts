@@ -16,6 +16,15 @@
  * Part 2 (plan 06-09) owns the in-run semantics: pick-without-pause, vote
  * pause, per-player rare events, mid-run leave and co-op defeat/survived.
  * Lobby-phase and in-run logic are kept in clearly separated methods.
+ *
+ * Pick-without-pause (ROOM-06, locked decision "Pick sem pausa"): the world
+ * NEVER pauses for a level-up / rare-event pick. The picking player's input is
+ * dropped in filterInputs (no moveVector -> the sim's movement step skips them)
+ * while auto-fire, contact damage and every teammate keep running. Because the
+ * world keeps ticking, a player mid-pick can level up again (gem magnet) or be
+ * offered a rare event — those offers are QUEUED per session and delivered one
+ * clock tick after the current pick resolves (never overwriting the pending
+ * options/timeout, and never before the client has seen 'upgrade_applied').
  */
 import { matchMaker } from '@colyseus/core'
 import type { Client } from '@colyseus/core'
@@ -24,7 +33,9 @@ import {
   CoopCreateOptionsSchema,
   ReadySchema,
   StartRunSchema,
+  selectUpgradeOptions,
 } from '@game/shared'
+import type { PlayerInput } from '@game/shared'
 import { BaseGameRoom } from './BaseGameRoom.js'
 import { LobbyPlayerSchema } from '../schema/GameSchema.js'
 import { generateRoomCode } from '../lib/roomCode.js'
@@ -35,10 +46,19 @@ type CoopRoomPhase = 'lobby' | 'starting' | 'active'
 /** Bounded so a pathological matchmaker cache can never spin onCreate forever. */
 const MAX_CODE_ATTEMPTS = 20
 
+/** Pick auto-select window — same 15s as BaseGameRoom.pauseAndSendLevelUp (D-14). */
+const PICK_TIMEOUT_MS = 15_000
+
+/** A pick offer that arrived while the session already had one pending. */
+type QueuedOffer = 'levelup' | 'rare_event'
+
 export class CoopRoom extends BaseGameRoom {
   maxClients = 4
 
   private roomPhase: CoopRoomPhase = 'lobby'
+
+  /** Per-session FIFO of offers deferred behind a pending pick (in-run only). */
+  private queuedOffers = new Map<string, QueuedOffer[]>()
 
   async onCreate(options?: unknown): Promise<void> {
     super.onCreate()
@@ -191,6 +211,7 @@ export class CoopRoom extends BaseGameRoom {
     }
     // Mid-run leave semantics belong to plan 06-09; the lobby roster is kept
     // intact in-run (HUD reads displayName from it).
+    this.queuedOffers.delete(client.sessionId)
     super.onLeave(client)
   }
 
@@ -213,15 +234,51 @@ export class CoopRoom extends BaseGameRoom {
   }
 
   // ---------------------------------------------------------------------------
-  // BaseGameRoom hook seams. Final in-run semantics: plan 06-09.
+  // In-run: pick-without-pause (ROOM-06) + per-player rare events (Pitfall 4)
   // ---------------------------------------------------------------------------
 
-  protected onUpgradePending(sessionId: string): void {
-    void sessionId // co-op never pauses the world on a pick (06-09)
+  /**
+   * Drop the moveVector of every player with a pending pick (06-RESEARCH.md
+   * Pattern 5). No input -> simulateTick's movement step skips them; autoFire
+   * does not read input, so the picking player keeps firing. No sim pause state.
+   */
+  protected override filterInputs(inputs: Map<string, PlayerInput>): Map<string, PlayerInput> {
+    for (const sessionId of this.pendingUpgradeOptions.keys()) {
+      inputs.delete(sessionId)
+    }
+    return inputs
   }
 
-  protected onUpgradeResolved(sessionId: string): void {
+  /**
+   * Level-up offer. Return contract is "true = the world is paused now" — co-op
+   * never pauses, so this always returns false and the base tick() continues to
+   * the remaining players' level-up checks, rare events, the schema mirror and
+   * the defeat check on the same tick. A level-up arriving while a pick is
+   * already pending is queued (never overwrites the pending options/timeout).
+   */
+  protected override pauseAndSendLevelUp(sessionId: string): boolean {
+    if (this.pendingUpgradeOptions.has(sessionId)) {
+      this.enqueueOffer(sessionId, 'levelup')
+      return false
+    }
+    super.pauseAndSendLevelUp(sessionId)
+    return false
+  }
+
+  /** Locked decision (ROOM-06): the world never pauses on a pick. */
+  protected onUpgradePending(sessionId: string): void {
     void sessionId
+  }
+
+  /**
+   * The pick resolved. The world was never paused, so nothing to resume — but a
+   * queued offer is delivered one clock tick later: 'upgrade_applied' is sent
+   * AFTER this hook returns and the client clears its picker on it, so an offer
+   * sent synchronously here would be wiped on the client.
+   */
+  protected onUpgradeResolved(sessionId: string): void {
+    if ((this.queuedOffers.get(sessionId)?.length ?? 0) === 0) return
+    this.clock.setTimeout(() => this.drainQueuedOffer(sessionId), 0)
   }
 
   protected isTickBlocked(): boolean {
@@ -229,9 +286,64 @@ export class CoopRoom extends BaseGameRoom {
     return this.roomPhase !== 'active'
   }
 
+  /**
+   * Rare event (GAME-11) in co-op: every player that is neither downed nor
+   * eliminated gets their OWN selectUpgradeOptions draw, registered in the
+   * per-session maps and sent to that client only (Pitfall 4). Iteration is in
+   * plainState.players insertion order (deterministic prng draw order). A player
+   * already mid-pick gets the rare event queued. Returns false: the world never
+   * pauses (base return contract "true = paused now").
+   */
   protected triggerRareEvent(): boolean {
-    // Abstract contract placeholder: no rare event, not paused. Per-player
-    // rare-event options land in plan 06-09.
+    for (const [sessionId, player] of this.plainState.players) {
+      if (player.downed || player.eliminated) continue
+      if (this.pendingUpgradeOptions.has(sessionId)) {
+        this.enqueueOffer(sessionId, 'rare_event')
+        continue
+      }
+      this.offerRareEvent(sessionId)
+    }
     return false
+  }
+
+  /** Generate, register and send one player's rare-event options. */
+  private offerRareEvent(sessionId: string): boolean {
+    const options = selectUpgradeOptions(this.plainState, sessionId, this.prng)
+    if (options.length === 0) return false
+    this.pendingUpgradeOptions.set(sessionId, options)
+    const timeout = setTimeout(() => {
+      this.autoSelectUpgrade(sessionId)
+    }, PICK_TIMEOUT_MS)
+    this.upgradeTimeouts.set(sessionId, timeout)
+    this.clients.find((c) => c.sessionId === sessionId)?.send('rare_event', { options })
+    return true
+  }
+
+  private enqueueOffer(sessionId: string, offer: QueuedOffer): void {
+    const queue = this.queuedOffers.get(sessionId)
+    if (queue) {
+      queue.push(offer)
+    } else {
+      this.queuedOffers.set(sessionId, [offer])
+    }
+  }
+
+  /** Deliver the next queued offer that still applies (one pick at a time). */
+  private drainQueuedOffer(sessionId: string): void {
+    if (this.roomPhase !== 'active') return
+    if (this.pendingUpgradeOptions.has(sessionId)) return // re-drained on resolve
+    const queue = this.queuedOffers.get(sessionId)
+    while (queue && queue.length > 0) {
+      const offer = queue.shift()!
+      const player = this.plainState.players.get(sessionId)
+      if (!player) break
+      if (offer === 'levelup') {
+        super.pauseAndSendLevelUp(sessionId)
+      } else if (!player.downed && !player.eliminated) {
+        this.offerRareEvent(sessionId)
+      }
+      if (this.pendingUpgradeOptions.has(sessionId)) break // offered — wait for the pick
+    }
+    if (!queue || queue.length === 0) this.queuedOffers.delete(sessionId)
   }
 }

@@ -5,7 +5,7 @@
  * subclass share a single mirror implementation. Pure transform over the two
  * arguments; no room state, no side effects beyond mutating `schema` in place.
  */
-import type { PlainGameState } from '@game/shared'
+import type { PlainGameState, PlainPlayerState } from '@game/shared'
 import {
   GameStateSchema,
   PlayerSchema,
@@ -16,6 +16,14 @@ import {
   BossSchema,
   WeaponStatsSchema,
 } from '../schema/GameSchema.js'
+
+/** Co-op downed/revive/eliminated fields (06-09) with wire-width clamps. */
+function mirrorCoopFields(ps: PlayerSchema, p: PlainPlayerState): void {
+  ps.downed = p.downed ?? false
+  ps.bleedOutRemainingMs = Math.max(0, Math.min(65535, Math.round(p.bleedOutRemainingMs ?? 0)))
+  ps.reviveProgressTicks = Math.max(0, Math.min(255, Math.round(p.reviveProgressTicks ?? 0)))
+  ps.eliminated = p.eliminated ?? false
+}
 
 /**
  * Mirror PlainGameState fields into the Colyseus GameStateSchema.
@@ -47,6 +55,7 @@ export function mirrorStateToSchema(plain: PlainGameState, schema: GameStateSche
       ps.classId = p.classId ?? 'human'
       ps.damageMultiplier = Math.round((p.damageMultiplier ?? 1) * 100)
       ps.fireRateMultiplier = Math.round((p.fireRateMultiplier ?? 1) * 100)
+      mirrorCoopFields(ps, p)
 
       // Sync weapons: splice to clear then push all
       while (ps.weapons.length > p.weapons.length) {
@@ -105,6 +114,7 @@ export function mirrorStateToSchema(plain: PlainGameState, schema: GameStateSche
       ps.classId = p.classId ?? 'human'
       ps.damageMultiplier = Math.round((p.damageMultiplier ?? 1) * 100)
       ps.fireRateMultiplier = Math.round((p.fireRateMultiplier ?? 1) * 100)
+      mirrorCoopFields(ps, p)
       for (const w of p.weapons) {
         ps.weapons.push(w)
       }
