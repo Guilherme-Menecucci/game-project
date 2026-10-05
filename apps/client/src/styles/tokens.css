@@ -72,6 +72,34 @@
   --color-victory-bg: rgba(14, 15, 20, 0.92);
 }
 
+/* ─── Phase 6 co-op tokens ─── */
+:root {
+  /* Teammate status (HUD cluster) */
+  --color-teammate-hp-fill: #3fa7d6;      /* steel blue — distinct from local green and boss crimson */
+  --color-teammate-hp-track: #2a2c38;     /* same track as HudHpBar for consistency */
+  --color-teammate-name-text: #d1d1db;    /* muted vs local player */
+
+  /* Downed / bleed-out */
+  --color-downed: #e08a3c;                /* amber-orange — urgent but distinct from destructive red */
+  --color-downed-pulse: rgba(224, 138, 60, 0.35);
+  --color-bleedout-text: #e05252;         /* countdown digits reuse destructive */
+
+  /* Revive */
+  --color-revive-ring: #4ade80;           /* green progress ring (reuses HP-green family) */
+  --color-revive-ring-track: rgba(255, 255, 255, 0.15);
+
+  /* Vote-pause */
+  --color-vote-bg: rgba(14, 15, 20, 0.92);   /* same near-opaque family as victory banner */
+  --color-vote-border: #6c63ff;              /* accent — it IS an interactive prompt */
+
+  /* Ready states (lobby) */
+  --color-ready: #22c55e;                 /* reuses --color-hp-fill green */
+  --color-not-ready: #8e8e9f;             /* --color-text-muted */
+
+  /* Spectate overlay */
+  --color-spectate-bg: rgba(14, 15, 20, 0.6); /* lighter scrim — world stays visible */
+}
+
 body {
   margin: 0;
   background: var(--color-bg);

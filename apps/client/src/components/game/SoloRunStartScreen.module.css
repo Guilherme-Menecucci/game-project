@@ -131,6 +131,43 @@
   gap: var(--space-md);
 }
 
+/* Play-mode row (06-UI-SPEC §1) — "Solo Run" / "Co-op". Rendered only when
+   the co-op entry handler is supplied; the selected mode reuses the selected
+   loadout card's accent-border treatment. */
+.modeRow {
+  display: flex;
+  gap: var(--space-sm);
+}
+
+.modeBtn {
+  min-width: 120px;
+  min-height: 44px;
+  padding: var(--space-sm) var(--space-md);
+  border-radius: 8px;
+  background: var(--color-surface);
+  border: 2px solid var(--color-border);
+  color: var(--color-text);
+  font-family: inherit;
+  font-size: var(--text-label);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.modeBtn:hover:not(:disabled):not(.modeBtnSelected) {
+  border-color: var(--color-accent);
+}
+
+.modeBtn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.modeBtnSelected {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 2px var(--color-accent);
+  cursor: default;
+}
+
 .loadoutCard {
   padding: var(--space-md);
   border-radius: 8px;

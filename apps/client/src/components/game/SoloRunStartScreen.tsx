@@ -5,8 +5,8 @@ import type { GameError, GamePhase } from '../../pages/GamePage.js'
 import { characterCatalog, weaponCatalog } from '@game/shared'
 import styles from './SoloRunStartScreen.module.css'
 
-type ClassId = 'vampire' | 'human' | 'dwarf'
-type WeaponId = 'magic_wand' | 'garlic' | 'knife' | 'bible'
+export type ClassId = 'vampire' | 'human' | 'dwarf'
+export type WeaponId = 'magic_wand' | 'garlic' | 'knife' | 'bible'
 
 // Pre-created loadouts (superseding D-03/D-06's independent class+weapon
 // pickers per user feedback on plan 05-09's checkpoint): each class maps to
@@ -18,8 +18,10 @@ export const CLASS_WEAPON: Record<ClassId, WeaponId> = {
   dwarf: 'bible',
 }
 
-// Fixed display order per D-02/05-UI-SPEC.md Component Inventory item 1
-const CLASS_ORDER: ClassId[] = ['vampire', 'human', 'dwarf']
+// Fixed display order per D-02/05-UI-SPEC.md Component Inventory item 1.
+// Exported so the co-op LobbyScreen class picker (06-UI-SPEC §5) renders the
+// same loadout cards in the same order.
+export const CLASS_ORDER: ClassId[] = ['vampire', 'human', 'dwarf']
 
 function statSummaryFor(classId: ClassId): string {
   const entry = characterCatalog[classId]
@@ -42,6 +44,12 @@ interface SoloRunStartScreenProps {
   selectedClassId: ClassId | null
   onSelectClass: (classId: ClassId) => void
   onSoloRun: () => void
+  /**
+   * Co-op entry point (06-UI-SPEC §1). When provided, a "Solo Run" / "Co-op"
+   * mode row renders above the loadout cards and clicking "Co-op" calls this.
+   * When omitted the screen renders exactly as the Phase 5 solo flow.
+   */
+  onCoop?: () => void
 }
 
 function ErrorBanner({ error, onRetry }: { error: GameError; onRetry: () => void }) {
@@ -104,6 +112,7 @@ export function SoloRunStartScreen({
   selectedClassId,
   onSelectClass,
   onSoloRun,
+  onCoop,
 }: SoloRunStartScreenProps) {
   const isConnecting = phase === 'CONNECTING'
   const isCharacterSelect = phase === 'CHARACTER_SELECT' || phase === 'CONNECTING'
@@ -118,6 +127,27 @@ export function SoloRunStartScreen({
       <div className={styles.screen}>
         <div className={styles.loadoutLayout}>
           {error && <ErrorBanner error={error} onRetry={onSoloRun} />}
+
+          {onCoop && (
+            <div className={styles.modeRow} role="group" aria-label="Play mode">
+              <button
+                type="button"
+                className={`${styles.modeBtn} ${styles.modeBtnSelected}`}
+                aria-pressed={true}
+              >
+                Solo Run
+              </button>
+              <button
+                type="button"
+                className={styles.modeBtn}
+                aria-pressed={false}
+                disabled={isConnecting}
+                onClick={onCoop}
+              >
+                Co-op
+              </button>
+            </div>
+          )}
 
           <h1 className={styles.heading}>Choose Your Survivor</h1>
 
