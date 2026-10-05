@@ -25,6 +25,16 @@
  * offered a rare event — those offers are QUEUED per session and delivered one
  * clock tick after the current pick resolves (never overwriting the pending
  * options/timeout, and never before the client has seen 'upgrade_applied').
+ *
+ * Vote-pause (ROOM-11, 06-RESEARCH.md Pattern 8): the ONE legitimate whole-world
+ * pause in co-op. Simple majority of alive voters (connected, not eliminated —
+ * downed players still vote), one vote at a time, 15s window. isTickBlocked()
+ * ORs votePaused in, which freezes elapsedMs/spawns exactly like solo's pause.
+ *
+ * End of run: the room never sets 'survived' (OQ4 — a leaver's client shows its
+ * own local survived summary). The only room-level result is the sim's
+ * full-squad 'defeated' (plan 06-03), after which roomPhase becomes 'ended' and
+ * ticking stops; clients read state.result exactly as in solo.
  */
 import { matchMaker } from '@colyseus/core'
 import type { Client } from '@colyseus/core'
@@ -33,6 +43,8 @@ import {
   CoopCreateOptionsSchema,
   ReadySchema,
   StartRunSchema,
+  VotePauseSchema,
+  VoteResumeSchema,
   selectUpgradeOptions,
 } from '@game/shared'
 import type { PlayerInput } from '@game/shared'
@@ -40,8 +52,11 @@ import { BaseGameRoom } from './BaseGameRoom.js'
 import { LobbyPlayerSchema } from '../schema/GameSchema.js'
 import { generateRoomCode } from '../lib/roomCode.js'
 
-/** 'starting' is the private transition while lock() is awaited (never on the wire). */
-type CoopRoomPhase = 'lobby' | 'starting' | 'active'
+/**
+ * 'starting' is the private transition while lock() is awaited (never on the
+ * wire — clients keep seeing 'lobby'). 'ended' = full-squad defeat (06-09).
+ */
+type CoopRoomPhase = 'lobby' | 'starting' | 'active' | 'ended'
 
 /** Bounded so a pathological matchmaker cache can never spin onCreate forever. */
 const MAX_CODE_ATTEMPTS = 20
@@ -52,6 +67,17 @@ const PICK_TIMEOUT_MS = 15_000
 /** A pick offer that arrived while the session already had one pending. */
 type QueuedOffer = 'levelup' | 'rare_event'
 
+type VoteKind = 'pause' | 'resume'
+
+/** 'vote_pause_state' lifecycle: open -> passed | expired | cancelled. */
+type VoteStatus = 'open' | 'passed' | 'expired' | 'cancelled'
+
+interface PauseVote {
+  kind: VoteKind
+  votes: Set<string>
+  timer: ReturnType<typeof setTimeout>
+}
+
 export class CoopRoom extends BaseGameRoom {
   maxClients = 4
 
@@ -59,6 +85,13 @@ export class CoopRoom extends BaseGameRoom {
 
   /** Per-session FIFO of offers deferred behind a pending pick (in-run only). */
   private queuedOffers = new Map<string, QueuedOffer[]>()
+
+  /** Vote window (ROOM-11 locked: 15s). Instance field so tests can shorten it. */
+  VOTE_WINDOW_MS = 15_000
+  /** Whole-world pause set only by a passed vote (never by picks). */
+  private votePaused = false
+  /** The single active vote, if any (one at a time — T-06-15). */
+  private pauseVote: PauseVote | null = null
 
   async onCreate(options?: unknown): Promise<void> {
     super.onCreate()
@@ -79,6 +112,7 @@ export class CoopRoom extends BaseGameRoom {
 
     this.setRoomPhase('lobby')
     this.registerLobbyHandlers()
+    this.registerVoteHandlers()
   }
 
   private async generateUniqueRoomCode(): Promise<string> {
@@ -103,7 +137,8 @@ export class CoopRoom extends BaseGameRoom {
   private setRoomPhase(phase: CoopRoomPhase): void {
     this.roomPhase = phase
     // 'starting' is internal; clients keep seeing 'lobby' until the run is live.
-    this.state.roomPhase = phase === 'active' ? 'active' : 'lobby'
+    // Wire values: 'lobby' | 'active' | 'ended'.
+    this.state.roomPhase = phase === 'starting' ? 'lobby' : phase
   }
 
   // ---------------------------------------------------------------------------
@@ -208,11 +243,27 @@ export class CoopRoom extends BaseGameRoom {
   async onLeave(client: Client): Promise<void> {
     if (this.roomPhase === 'lobby') {
       await this.handleLobbyLeave(client)
+    } else if (this.roomPhase === 'active' || this.roomPhase === 'ended') {
+      this.handleRunLeave(client)
     }
-    // Mid-run leave semantics belong to plan 06-09; the lobby roster is kept
-    // intact in-run (HUD reads displayName from it).
     this.queuedOffers.delete(client.sessionId)
+    // Base cleanup: plainState + schema player, pending pick + timeout, rate and
+    // anti-replay maps. No re-join in the same run (v1).
     super.onLeave(client)
+    // The leaver no longer counts: drop their vote and re-tally (needed may
+    // shrink, so the vote can pass — or empty out and cancel — right here).
+    if (this.pauseVote) this.evaluateVote()
+  }
+
+  /**
+   * Mid-run leave (OQ4). The room never sets a 'survived' result here — that is
+   * solo-only semantics; the leaver's client shows its own local summary and the
+   * run continues for everyone else. The lobby entry goes too, so state.lobby
+   * mirrors the live squad (no ghost teammate in the HUD roster).
+   * plainState.mode/playerCount are never touched (frozen at start, 06-07/06-08).
+   */
+  private handleRunLeave(client: Client): void {
+    this.state.lobby.delete(client.sessionId)
   }
 
   private async handleLobbyLeave(client: Client): Promise<void> {
@@ -282,8 +333,135 @@ export class CoopRoom extends BaseGameRoom {
   }
 
   protected isTickBlocked(): boolean {
-    // Lobby (and the lock() transition) never simulates. 06-09 adds vote-pause.
-    return this.roomPhase !== 'active'
+    // Lobby, the lock() transition and 'ended' never simulate; a passed
+    // vote-pause freezes the whole world (ROOM-11). Picks never block (ROOM-06).
+    return this.roomPhase !== 'active' || this.votePaused
+  }
+
+  /**
+   * Full-squad defeat (sim rule, plan 06-03: every player downed or eliminated).
+   * Runs after the schema mirror, so state.result='defeated' is already on the
+   * wire. Flip to 'ended' (blocks every further tick) and drop in-run timers so
+   * nothing mutates the finished run.
+   */
+  protected override onDefeat(): void {
+    if (this.roomPhase === 'ended') return
+    this.setRoomPhase('ended')
+    if (this.pauseVote) this.closeVote('cancelled', this.votesNeeded())
+    for (const timeout of this.upgradeTimeouts.values()) clearTimeout(timeout)
+    this.upgradeTimeouts.clear()
+    this.pendingUpgradeOptions.clear()
+    this.queuedOffers.clear()
+  }
+
+  onDispose(): void {
+    if (this.pauseVote) clearTimeout(this.pauseVote.timer)
+    this.pauseVote = null
+  }
+
+  // ---------------------------------------------------------------------------
+  // In-run: vote-pause (ROOM-11, 06-RESEARCH.md Pattern 8)
+  // ---------------------------------------------------------------------------
+
+  private registerVoteHandlers(): void {
+    // Shape: rate gate -> safeParse ({} only) -> silent drop. Phase/eligibility
+    // gates live in castVote.
+    this.onMessage('vote_pause', (client: Client, data: unknown) => {
+      if (!this.allowMessage(client)) return
+      if (!VotePauseSchema.safeParse(data).success) return
+      this.castVote(client.sessionId, 'pause')
+    })
+
+    this.onMessage('vote_resume', (client: Client, data: unknown) => {
+      if (!this.allowMessage(client)) return
+      if (!VoteResumeSchema.safeParse(data).success) return
+      this.castVote(client.sessionId, 'resume')
+    })
+  }
+
+  /**
+   * Initiate or join a vote. Pause votes only while running, resume votes only
+   * while paused — so a vote of the other kind can never run concurrently. A
+   * repeat vote from the same session is a no-op (Set semantics, T-06-15).
+   */
+  private castVote(sessionId: string, kind: VoteKind): void {
+    if (this.roomPhase !== 'active') return
+    if (!this.aliveVoterIds().includes(sessionId)) return
+    if (kind === 'pause' ? this.votePaused : !this.votePaused) return
+    if (this.pauseVote && this.pauseVote.kind !== kind) return
+
+    if (!this.pauseVote) {
+      // Wall-clock window (outside the sim — same class as the upgrade timeouts).
+      const timer = setTimeout(() => this.expireVote(), this.VOTE_WINDOW_MS)
+      this.pauseVote = { kind, votes: new Set<string>(), timer }
+    }
+    if (this.pauseVote.votes.has(sessionId)) return
+    this.pauseVote.votes.add(sessionId)
+    this.evaluateVote()
+  }
+
+  /** Connected clients whose player exists and is not eliminated (downed still vote). */
+  private aliveVoterIds(): string[] {
+    const ids: string[] = []
+    for (const c of this.clients) {
+      const player = this.plainState.players.get(c.sessionId)
+      if (player && !player.eliminated) ids.push(c.sessionId)
+    }
+    return ids
+  }
+
+  /** Simple majority of alive voters: floor(alive / 2) + 1. */
+  private votesNeeded(): number {
+    return Math.floor(this.aliveVoterIds().length / 2) + 1
+  }
+
+  /**
+   * Re-tally the active vote: drop votes of sessions that are no longer alive
+   * voters (left / eliminated), then pass, cancel (no votes left) or broadcast
+   * the open state.
+   */
+  private evaluateVote(): void {
+    const vote = this.pauseVote
+    if (!vote) return
+    const alive = new Set(this.aliveVoterIds())
+    for (const id of vote.votes) {
+      if (!alive.has(id)) vote.votes.delete(id)
+    }
+    const needed = Math.floor(alive.size / 2) + 1
+    if (vote.votes.size === 0) {
+      this.closeVote('cancelled', needed)
+      return
+    }
+    if (vote.votes.size >= needed) {
+      this.votePaused = vote.kind === 'pause'
+      this.closeVote('passed', needed)
+      return
+    }
+    this.broadcastVoteState(vote, 'open', needed)
+  }
+
+  private expireVote(): void {
+    if (!this.pauseVote) return
+    this.closeVote('expired', this.votesNeeded())
+  }
+
+  private closeVote(status: Exclude<VoteStatus, 'open'>, needed: number): void {
+    const vote = this.pauseVote
+    if (!vote) return
+    clearTimeout(vote.timer)
+    this.pauseVote = null
+    this.broadcastVoteState(vote, status, needed)
+  }
+
+  /** 'vote_pause_state' { kind, votes, needed, status, paused } to every client. */
+  private broadcastVoteState(vote: PauseVote, status: VoteStatus, needed: number): void {
+    this.broadcast('vote_pause_state', {
+      kind: vote.kind,
+      votes: vote.votes.size,
+      needed,
+      status,
+      paused: this.votePaused,
+    })
   }
 
   /**
