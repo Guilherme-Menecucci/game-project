@@ -16,8 +16,11 @@
 
 .layout {
   position: relative;
-  width: 100%;
-  max-width: 848px; /* 4 × 200px loadout-card slots + 3 × --space-md gaps */
+  /* Shrink-wrap to the widest row (4 composed loadout-card slots — 200px
+     content-box + padding + border each — plus gaps) so the header and footer
+     stretch to exactly the slot row's width. */
+  width: fit-content;
+  max-width: 100%;
   display: flex;
   flex-direction: column;
   align-items: center;
