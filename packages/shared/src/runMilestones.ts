@@ -21,6 +21,7 @@ import type { Prng } from './prng.js'
 import { WORLD_W, WORLD_H } from './spatialGrid.js'
 import { eliteCatalog } from './eliteCatalog.js'
 import { bossCatalog, scaleFinalBossStats } from './bossCatalog.js'
+import { difficultyPlayerCount, pickSpawnAnchor, scaleEnemyHp } from './spawn.js'
 
 export type MilestoneId = 'elite1' | 'elite2' | 'elite3' | 'elite4' | 'biomeBoss' | 'finalBoss'
 
@@ -57,18 +58,20 @@ const MILESTONE_ORDER: MilestoneId[] = [
 const ELITE_IDS = new Set<MilestoneId>(['elite1', 'elite2', 'elite3', 'elite4'])
 
 /**
- * Compute a toroidal spawn position offset from the first player, mirroring
+ * Compute a toroidal spawn position offset from an anchor player, mirroring
  * spawn.ts's spawnEnemies positioning convention (600,000 sub-units away at
  * a random angle). Falls back to world-center-relative if no players exist.
+ *
+ * Draw order: angle → anchor (coop only, via pickSpawnAnchor). Solo anchors
+ * on the first player with no extra draw (Pitfall 2 — Phase 5 identity).
  */
 function rollSpawnPosition(state: PlainGameState, prng: Prng): { x: number; y: number } {
   const angle = prng.next() * 2 * Math.PI
   const dx = Math.round(Math.cos(angle) * 600_000)
   const dy = Math.round(Math.sin(angle) * 600_000)
 
-  if (state.players.size > 0) {
-    const players = [...state.players.values()]
-    const player = players[0]!
+  const player = pickSpawnAnchor(state, prng)
+  if (player) {
     return {
       x: (((player.x + dx) % WORLD_W) + WORLD_W) % WORLD_W,
       y: (((player.y + dy) % WORLD_H) + WORLD_H) % WORLD_H,
@@ -93,6 +96,8 @@ export function checkMilestoneSpawns(state: PlainGameState, prng: Prng): PlainGa
   const enemies = new Map(state.enemies)
   const bosses = new Map(state.bosses ?? new Map())
   let changed = false
+  // Phase 6 (ROOM-10): frozen playerCount snapshot; 1 for solo (mode gate).
+  const playerCount = difficultyPlayerCount(state)
 
   for (const id of MILESTONE_ORDER) {
     if (milestonesSpawned[id]) continue
@@ -106,8 +111,8 @@ export function checkMilestoneSpawns(state: PlainGameState, prng: Prng): PlainGa
         id: enemyId,
         x,
         y,
-        hp: entry.hp,
-        maxHp: entry.maxHp,
+        hp: scaleEnemyHp(entry.hp, playerCount),
+        maxHp: scaleEnemyHp(entry.maxHp, playerCount),
         archetype: entry.spawnArchetype,
         speed: entry.speed,
         lastFireTick: 0,
@@ -124,8 +129,8 @@ export function checkMilestoneSpawns(state: PlainGameState, prng: Prng): PlainGa
         name: entry.name,
         x,
         y,
-        hp: entry.baseHp,
-        maxHp: entry.baseHp,
+        hp: entry.baseHp * playerCount,
+        maxHp: entry.baseHp * playerCount,
         speed: entry.baseSpeed,
         telegraphState: 'idle',
       }
@@ -140,8 +145,8 @@ export function checkMilestoneSpawns(state: PlainGameState, prng: Prng): PlainGa
         name: entry.name,
         x,
         y,
-        hp: scaled.hp,
-        maxHp: scaled.hp,
+        hp: scaled.hp * playerCount,
+        maxHp: scaled.hp * playerCount,
         speed: scaled.speed,
         telegraphState: 'idle',
       }

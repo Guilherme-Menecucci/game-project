@@ -113,3 +113,50 @@ describe('spawnEnemies (GAME-04, GAME-05)', () => {
     expect(next.enemies.size).toBe(MAX_ENEMIES_CAP)
   })
 })
+
+// Phase 6 (ROOM-10): coop spawn-curve cases — NEW tests only; the solo
+// expectations above are unchanged (solo identity, Pitfall 2).
+describe('spawnEnemies coop scaling (ROOM-10)', () => {
+  function coopStateAtTime(elapsedMs: number, playerCount: number): PlainGameState {
+    const state = stateAtTime(elapsedMs)
+    state.mode = 'coop'
+    state.playerCount = playerCount
+    return state
+  }
+
+  it('coop-2 spawns on the 25-tick boundary at t=0 (2000ms / 1.6), solo does not', () => {
+    const coop = coopStateAtTime(0, 2)
+    coop.tick = 25
+    expect(spawnEnemies(coop, mulberry32(1)).enemies.size).toBe(1)
+
+    const solo = stateAtTime(0)
+    solo.tick = 25
+    expect(spawnEnemies(solo, mulberry32(1)).enemies.size).toBe(0)
+  })
+
+  it('coop-4 swarmers spawn with round(1 * 1.6) = 2 hp', () => {
+    const state = coopStateAtTime(30_000, 4)
+    const next = spawnEnemies(state, mulberry32(42))
+    const enemy = [...next.enemies.values()][0]!
+    expect(enemy.archetype).toBe('swarmer')
+    expect(enemy.hp).toBe(2)
+    expect(enemy.maxHp).toBe(2)
+  })
+
+  it('max-alive cap of 300 still holds in coop at 4 players', () => {
+    const state = coopStateAtTime(1_000_000, 4)
+    for (let i = 0; i < MAX_ENEMIES_CAP; i++) {
+      state.enemies.set(`e${i}`, {
+        id: `e${i}`,
+        x: 0,
+        y: 0,
+        hp: 10,
+        maxHp: 10,
+        archetype: 'swarmer',
+        speed: 100_000,
+        lastFireTick: 0,
+      })
+    }
+    expect(spawnEnemies(state, mulberry32(1)).enemies.size).toBe(MAX_ENEMIES_CAP)
+  })
+})
