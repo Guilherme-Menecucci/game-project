@@ -17,6 +17,11 @@
   pointer-events: none;
 }
 
+/* Co-op only: teammate cluster sits below the local HP bar (UI-SPEC §6) */
+.teammates {
+  margin-top: var(--space-sm);
+}
+
 /* Top-center: Run timer + boss HP bar (stacked via flex column) */
 .topCenter {
   position: absolute;
@@ -80,4 +85,13 @@
   left: 50%;
   transform: translateX(-50%);
   pointer-events: none;
+}
+
+/* Co-op only: "Team kills: N" — same Label treatment as HudKillCount */
+.teamKills {
+  font-size: var(--text-label);
+  font-weight: 400;
+  color: var(--color-text-muted);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+  line-height: 1.4;
 }

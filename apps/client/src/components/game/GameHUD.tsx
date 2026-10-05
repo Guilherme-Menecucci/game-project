@@ -18,6 +18,7 @@ import { HudXpBar } from './HudXpBar.js'
 import { HudKillCount } from './HudKillCount.js'
 import { HudBossBar } from './HudBossBar.js'
 import { VictoryBanner } from './VictoryBanner.js'
+import { HudTeammates, type TeammateStatus } from './HudTeammates.js'
 import { LogoutButton } from '../auth/LogoutButton.js'
 import { WeaponSlotRow } from '../ui/WeaponSlotRow.js'
 import { getXpThresholdForLevel } from '@game/shared'
@@ -52,6 +53,12 @@ export function GameHUD({ room, onEndRun }: GameHUDProps) {
   const [showVictory, setShowVictory] = useState(false)
   const prevHasFinalBossRef = useRef(false)
   const weaponStatsRef = useRef<Record<string, { totalDamage: number; acquiredAtMs: number }>>({})
+  // Co-op (Phase 6): latched once from the wire — state.lobby is non-empty ONLY
+  // in co-op (SoloRoom never writes it). Same rule as GameScene.isCoop (06-12);
+  // NOT players.size, which can drop to 1 after a mid-run leave.
+  const [isCoop, setIsCoop] = useState(false)
+  const isCoopRef = useRef(false)
+  const [teammates, setTeammates] = useState<TeammateStatus[]>([])
 
   // Subscribe to full state changes — fires at ~20Hz server tick rate
   useEffect(() => {
@@ -113,6 +120,30 @@ export function GameHUD({ room, onEndRun }: GameHUDProps) {
         setShowVictory(true)
       }
       prevHasFinalBossRef.current = hasFinalBoss
+
+      // ── Co-op HUD (Phase 6) — solo never enters this block ──────────────
+      const lobby = state.lobby as Map<string, { displayName?: string }> | undefined
+      if (!isCoopRef.current && lobby !== undefined && lobby.size > 0) {
+        isCoopRef.current = true
+        setIsCoop(true)
+      }
+      if (isCoopRef.current) {
+        const mates: TeammateStatus[] = []
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        for (const [id, p] of state.players as Map<string, any>) {
+          if (id === room.sessionId) continue
+          mates.push({
+            sessionId: id,
+            displayName: lobby?.get(id)?.displayName || 'Player',
+            hp: p.hp ?? 0,
+            maxHp: p.maxHp ?? 1,
+            downed: p.downed === true,
+            bleedOutRemainingMs: p.bleedOutRemainingMs ?? 0,
+            eliminated: p.eliminated === true,
+          })
+        }
+        setTeammates(mates)
+      }
     }
 
     room.onStateChange(handler)
@@ -145,6 +176,11 @@ export function GameHUD({ room, onEndRun }: GameHUDProps) {
       {/* Top-left: HP cluster */}
       <div className={styles.topLeft}>
         <HudHpBar hp={hp} maxHp={maxHp} />
+        {isCoop && teammates.length > 0 && (
+          <div className={styles.teammates}>
+            <HudTeammates teammates={teammates} />
+          </div>
+        )}
       </div>
 
       {/* Top-center: Run timer + boss HP bar */}
@@ -187,7 +223,12 @@ export function GameHUD({ room, onEndRun }: GameHUDProps) {
 
       {/* Bottom-left: Kill count */}
       <div className={styles.bottomLeft}>
-        <HudKillCount kills={kills} />
+        {isCoop ? (
+          // Co-op: enemies onRemove already counts every squad kill (team total)
+          <span className={styles.teamKills}>Team kills: {kills}</span>
+        ) : (
+          <HudKillCount kills={kills} />
+        )}
       </div>
 
       {/* Bottom-center: Weapon slots row */}

@@ -1,0 +1,75 @@
+/* Co-op teammate cluster — left column below the local HP bar (UI-SPEC §6) */
+.cluster {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  background: var(--color-hud-backing);
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  padding: var(--space-sm);
+  pointer-events: none;
+}
+
+.row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+/* Eliminated teammate: dimmed row, struck-through name */
+.eliminated {
+  opacity: 0.4;
+}
+
+.eliminated .name {
+  text-decoration: line-through;
+}
+
+.nameLine {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--space-sm);
+  width: 120px;
+}
+
+.name {
+  font-size: var(--text-label);
+  font-weight: 400;
+  color: var(--color-teammate-name-text);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.countdown {
+  font-size: var(--text-label);
+  font-weight: 400;
+  color: var(--color-bleedout-text);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+  line-height: 1.4;
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+
+/* Teammate HP bar — 120×6px fixed */
+.track {
+  width: 120px;
+  height: 6px;
+  background: var(--color-teammate-hp-track);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.fill {
+  height: 100%;
+  border-radius: 3px;
+  background: var(--color-teammate-hp-fill);
+  transition: width 100ms linear;
+}
+
+.fillDowned {
+  background: var(--color-downed);
+}
