@@ -47,6 +47,12 @@
   pointer-events: none;
 }
 
+/* Co-op only: keep End Run / Logout / Vote Pause above the PAUSED scrim
+   (VotePauseBanner scrim is z-index 1 inside this overlay) */
+.topRightCoop {
+  z-index: 2;
+}
+
 /* LogoutButton needs pointer-events: auto (interactive) */
 .logoutWrapper {
   pointer-events: auto;

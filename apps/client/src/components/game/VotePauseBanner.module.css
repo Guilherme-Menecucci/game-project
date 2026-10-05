@@ -1,0 +1,116 @@
+/* Active pause vote — top-center, below the timer + boss-bar zone (UI-SPEC §6).
+   Non-blocking: only the button takes pointer events. */
+.banner {
+  position: fixed;
+  top: 140px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-sm);
+  background: var(--color-vote-bg);
+  border: 1px solid var(--color-vote-border);
+  border-radius: 4px;
+  padding: var(--space-sm) var(--space-md);
+  pointer-events: none;
+}
+
+.bannerRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+}
+
+.label {
+  font-size: var(--text-label);
+  font-weight: 600;
+  color: var(--color-text);
+  line-height: 1.4;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Accent CTA — re-enables pointer events (HUD root is pointer-events: none) */
+.voteBtn {
+  pointer-events: auto;
+  min-height: 44px;
+  padding: 0 var(--space-md);
+  background: var(--color-accent);
+  color: var(--color-text);
+  border: none;
+  border-radius: 4px;
+  font-family: inherit;
+  font-size: var(--text-label);
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 150ms ease;
+}
+
+.voteBtn:hover {
+  background: var(--color-accent-hover);
+}
+
+/* 15s cosmetic countdown — same 320×8 bar idiom as the boss bar. The server
+   owns the real window; this is a pure CSS animation restarted via React key. */
+.countdownTrack {
+  width: 320px;
+  height: 8px;
+  background: var(--color-hp-track);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.countdownFill {
+  height: 100%;
+  width: 100%;
+  background: var(--color-vote-border);
+  border-radius: 4px;
+  animation: vote-countdown 15s linear forwards;
+}
+
+@keyframes vote-countdown {
+  from {
+    width: 100%;
+  }
+  to {
+    width: 0%;
+  }
+}
+
+/* PAUSED — full-screen scrim over the world. Sits below the co-op top-right
+   cluster (End Run / Logout stay reachable) via GameHUD's .topRightCoop. */
+.scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-md);
+  background: var(--color-vote-bg);
+  pointer-events: auto;
+  text-align: center;
+}
+
+.pausedHeadline {
+  font-size: var(--text-display);
+  font-weight: 600;
+  color: var(--color-text);
+  line-height: 1.1;
+}
+
+.pausedBody {
+  font-size: var(--text-body);
+  font-weight: 400;
+  color: var(--color-text-muted);
+  line-height: 1.5;
+}
+
+.resumeTally {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-xs);
+}

@@ -19,6 +19,7 @@ import { HudKillCount } from './HudKillCount.js'
 import { HudBossBar } from './HudBossBar.js'
 import { VictoryBanner } from './VictoryBanner.js'
 import { HudTeammates, type TeammateStatus } from './HudTeammates.js'
+import { VotePauseBanner, type VoteActivity } from './VotePauseBanner.js'
 import { LogoutButton } from '../auth/LogoutButton.js'
 import { WeaponSlotRow } from '../ui/WeaponSlotRow.js'
 import { getXpThresholdForLevel } from '@game/shared'
@@ -59,6 +60,11 @@ export function GameHUD({ room, onEndRun }: GameHUDProps) {
   const [isCoop, setIsCoop] = useState(false)
   const isCoopRef = useRef(false)
   const [teammates, setTeammates] = useState<TeammateStatus[]>([])
+  const [localEliminated, setLocalEliminated] = useState(false)
+  const [voteActivity, setVoteActivity] = useState<VoteActivity>({
+    voteOpen: false,
+    paused: false,
+  })
 
   // Subscribe to full state changes — fires at ~20Hz server tick rate
   useEffect(() => {
@@ -143,6 +149,10 @@ export function GameHUD({ room, onEndRun }: GameHUDProps) {
           })
         }
         setTeammates(mates)
+
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const me = myPlayer as any
+        setLocalEliminated(me?.eliminated === true)
       }
     }
 
@@ -190,11 +200,26 @@ export function GameHUD({ room, onEndRun }: GameHUDProps) {
       </div>
 
       {/* Top-right: XP cluster + LogoutButton + End Run */}
-      <div className={styles.topRight}>
+      {/* Co-op: raised above the PAUSED scrim so End Run / Logout stay reachable */}
+      <div className={isCoop ? `${styles.topRight} ${styles.topRightCoop}` : styles.topRight}>
         <HudXpBar xp={xp} threshold={getXpThresholdForLevel(level)} level={level} />
         <div className={styles.logoutWrapper}>
           <LogoutButton />
         </div>
+        {/* Co-op only: start a pause vote (any alive-or-downed player may call one,
+            ROOM-11). Hidden while a vote is open or the world is paused — the
+            banner/scrim then carry the vote buttons. Sends intent only. */}
+        {isCoop && !localEliminated && !voteActivity.voteOpen && !voteActivity.paused && (
+          <div className={styles.logoutWrapper}>
+            <button
+              className={styles.endRunBtn}
+              type="button"
+              onClick={() => room.send('vote_pause', {})}
+            >
+              Vote Pause
+            </button>
+          </div>
+        )}
         {onEndRun && (
           <div className={styles.logoutWrapper}>
             <button
@@ -238,6 +263,15 @@ export function GameHUD({ room, onEndRun }: GameHUDProps) {
 
       {/* Victory banner — own fixed positioning, self-dismisses after 4s */}
       <VictoryBanner visible={showVictory} />
+
+      {/* Co-op vote-pause banner + PAUSED scrim — driven solely by server broadcasts */}
+      {isCoop && (
+        <VotePauseBanner
+          room={room}
+          canVote={!localEliminated}
+          onActivityChange={setVoteActivity}
+        />
+      )}
     </div>
   )
 }
