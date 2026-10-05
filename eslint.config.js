@@ -12,12 +12,18 @@ export default tseslint.config(
       globals: {
         ...globals.node,
       },
+      parserOptions: {
+        // Pin the root: any nested checkout (e.g. agent worktrees) carries its own
+        // tsconfig, and multiple candidate roots make typescript-eslint fail every file.
+        tsconfigRootDir: import.meta.dirname,
+      },
     },
     rules: {
       '@typescript-eslint/no-unused-vars': 'error',
     },
   },
   {
-    ignores: ['**/dist/**', '**/node_modules/**'],
+    // Flat config does not read .gitignore — mirror its tooling/scratch entries here.
+    ignores: ['**/dist/**', '**/node_modules/**', '.claude/**', '.github/**', '__ideas/**'],
   }
 )
