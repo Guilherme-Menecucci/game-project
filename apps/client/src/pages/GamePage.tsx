@@ -669,7 +669,14 @@ export function GamePage() {
       {(phase === 'ACTIVE' || phase === 'UPGRADING' || phase === 'SLOT_FULL') &&
         roomRef.current && (
           <>
-            <PhaserGame room={roomRef.current} onGameOver={handleGameOver} />
+            {/* inputLocked: the client half of the co-op pick lock (ROOM-06 locked
+                decision) — PhaserGame + GameHUD stay mounted under the picker,
+                so the world stays visible behind the overlay. */}
+            <PhaserGame
+              room={roomRef.current}
+              onGameOver={handleGameOver}
+              inputLocked={phase === 'UPGRADING' || phase === 'SLOT_FULL'}
+            />
             <GameHUD room={roomRef.current} onEndRun={handleEndRun} />
           </>
         )}
