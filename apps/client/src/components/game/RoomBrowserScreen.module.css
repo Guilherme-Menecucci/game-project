@@ -1,0 +1,306 @@
+/* RoomBrowserScreen — full-page co-op room browser (06-UI-SPEC §2–4).
+   Same full-screen backdrop/z-index as SoloRunStartScreen; centered column
+   max-width 640px. Tokens + spacing scale only. */
+.screen {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  overflow-y: auto;
+  background: var(--color-bg);
+  padding: var(--space-2xl) var(--space-md);
+}
+
+.column {
+  width: 100%;
+  max-width: 640px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.heading {
+  font-size: var(--text-heading);
+  font-weight: 600;
+  color: var(--color-text);
+  margin: 0;
+  line-height: 1.2;
+}
+
+.bodyText {
+  font-size: var(--text-body);
+  color: var(--color-text-muted);
+  margin: 0;
+  line-height: 1.5;
+}
+
+.mutedText {
+  font-size: var(--text-label);
+  color: var(--color-text-muted);
+  margin: 0;
+  line-height: 1.4;
+}
+
+/* ─── Buttons ─── */
+.primaryBtn {
+  background: var(--color-accent);
+  color: var(--color-text);
+  border: none;
+  border-radius: 4px;
+  font-family: inherit;
+  font-size: var(--text-body);
+  font-weight: 600;
+  min-height: 44px;
+  padding: 0 var(--space-md);
+  cursor: pointer;
+  transition: background 150ms ease;
+}
+
+.primaryBtn:hover:not(:disabled) {
+  background: var(--color-accent-hover);
+}
+
+.primaryBtn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.secondaryBtn {
+  background: var(--color-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  font-family: inherit;
+  font-size: var(--text-body);
+  font-weight: 600;
+  min-height: 44px;
+  padding: 0 var(--space-md);
+  cursor: pointer;
+}
+
+.secondaryBtn:hover:not(:disabled) {
+  border-color: var(--color-accent);
+}
+
+.textBtn {
+  background: transparent;
+  border: none;
+  color: var(--color-text-muted);
+  font-family: inherit;
+  font-size: var(--text-label);
+  font-weight: 600;
+  min-height: 44px;
+  padding: 0 var(--space-sm);
+  cursor: pointer;
+}
+
+.textBtn:hover:not(:disabled) {
+  color: var(--color-text);
+}
+
+.textBtn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* ─── Actions row ─── */
+.actionsRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.refreshBtn {
+  margin-left: auto;
+}
+
+/* ─── Error banner (mirrors SoloRunStartScreen ErrorBanner) ─── */
+.errorBanner {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  padding: var(--space-sm);
+  background: rgba(224, 82, 82, 0.1);
+  border: 1px solid var(--color-destructive);
+  border-radius: 4px;
+}
+
+.errorText {
+  font-size: var(--text-label);
+  color: var(--color-destructive);
+  margin: 0;
+}
+
+/* ─── Inline panels (Create Room / Join by Code) ─── */
+.panel {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-md);
+  padding: var(--space-lg);
+  border-radius: 8px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  margin: 0;
+}
+
+.segmented {
+  display: flex;
+  gap: var(--space-sm);
+}
+
+.segmentBtn {
+  min-width: 120px;
+  min-height: 44px;
+  padding: var(--space-sm) var(--space-md);
+  border-radius: 8px;
+  background: var(--color-card-base);
+  border: 2px solid var(--color-border);
+  color: var(--color-text);
+  font-family: inherit;
+  font-size: var(--text-label);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+/* Selected = same accent-border treatment as a selected loadout card */
+.segmentBtnSelected {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 2px var(--color-accent);
+}
+
+/* ─── Room-code character boxes (40×48 fixed cell, UI-SPEC §Spacing exception) ─── */
+.codeDisplay {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+}
+
+.codeBoxes {
+  display: flex;
+  gap: var(--space-sm);
+}
+
+.codeBox {
+  width: 40px;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  color: var(--color-text);
+  font-family: monospace;
+  font-size: var(--text-heading);
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.codeBoxActive {
+  border-color: var(--color-border-focus);
+}
+
+/* Join-by-code: one real input stretched invisibly over the 6 boxes so any
+   tap/click focuses it and native paste/IME/autocomplete behave normally. */
+.codeEntry {
+  position: relative;
+  display: inline-flex;
+  cursor: text;
+}
+
+.codeInput {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  border: none;
+  padding: 0;
+  margin: 0;
+  font-size: var(--text-body);
+  cursor: text;
+}
+
+/* Compact chip variant (LobbyScreen header, §5) */
+.codeChip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: 0 0 0 var(--space-sm);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+}
+
+.codeChipText {
+  font-family: monospace;
+  font-size: var(--text-label);
+  font-weight: 600;
+  letter-spacing: 0.2em;
+  color: var(--color-text);
+}
+
+/* ─── Room list ─── */
+.roomList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.roomRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  padding: var(--space-sm) var(--space-md);
+  border-radius: 8px;
+  background: var(--color-card-base);
+  border: 1px solid var(--color-border);
+}
+
+.hostName {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-body);
+  font-weight: 400;
+  color: var(--color-text);
+}
+
+.countBadge {
+  font-size: var(--text-label);
+  color: var(--color-text-muted);
+}
+
+/* ─── Empty state ─── */
+.emptyState {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-sm);
+  padding: var(--space-lg);
+  border-radius: 8px;
+  background: var(--color-card-base);
+  border: 1px solid var(--color-border);
+}
+
+.emptyHeading {
+  font-size: var(--text-label);
+  font-weight: 600;
+  color: var(--color-text);
+  margin: 0;
+}
+
+.footer {
+  display: flex;
+  justify-content: flex-start;
+  margin-top: var(--space-md);
+}
