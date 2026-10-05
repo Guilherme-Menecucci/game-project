@@ -318,6 +318,35 @@ describe('CoopRoom vote-pause + leave/end semantics (ROOM-11)', () => {
     await leaveAll(clients.slice(1))
   })
 
+  it('a pause orphaned by the last alive voter leaving is released (T-06-15)', async () => {
+    const { room, clients, msgs } = await startedRun(3)
+    const [a, b, c] = clients
+
+    a.send('vote_pause', {})
+    await waitUntil(() => msgs[2]!.length === 1)
+    b.send('vote_pause', {})
+    await waitUntil(() => room.votePaused === true)
+    expect(room.votePaused).toBe(true)
+
+    // c is eliminated (spectator) and can never vote a resume.
+    room.plainState.players.get(c.sessionId).eliminated = true
+    room.plainState.players.get(c.sessionId).hp = 0
+
+    await a.leave()
+    await b.leave()
+
+    // The pause is released and announced; the sim then sees a full-squad
+    // defeat (only an eliminated player left) and the room ends.
+    await waitUntil(() => last(msgs[2]!)?.paused === false)
+    expect(last(msgs[2]!)).toMatchObject({ kind: 'resume', status: 'cancelled', paused: false })
+    await waitUntil(() => room.state.roomPhase === 'ended')
+    expect(room.votePaused).toBe(false)
+    expect(room.state.result).toBe('defeated')
+    expect(room.state.roomPhase).toBe('ended')
+
+    await leaveAll([c])
+  })
+
   it('mid-run leave removes the player, sets no survived result, and the run continues', async () => {
     const { room, clients } = await startedRun(3)
     const [a, b, c] = clients
