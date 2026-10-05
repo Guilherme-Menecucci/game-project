@@ -32,3 +32,4 @@ export * from './runMilestones.js'
 // ─── Phase 6 ────────────────────────────────────────────────────────────────
 export * from './coop.js'
 export * from './identity.js'
+export * from './cameraMath.js'
