@@ -20,9 +20,10 @@ import { HudBossBar } from './HudBossBar.js'
 import { VictoryBanner } from './VictoryBanner.js'
 import { HudTeammates, type TeammateStatus } from './HudTeammates.js'
 import { VotePauseBanner, type VoteActivity } from './VotePauseBanner.js'
+import { DownedOverlay, SpectateChip, RevivingLabel } from './DownedOverlay.js'
 import { LogoutButton } from '../auth/LogoutButton.js'
 import { WeaponSlotRow } from '../ui/WeaponSlotRow.js'
-import { getXpThresholdForLevel } from '@game/shared'
+import { getXpThresholdForLevel, REVIVE_RADIUS, toroidalDistSq } from '@game/shared'
 import styles from './GameHUD.module.css'
 
 export interface EndRunStats {
@@ -61,6 +62,9 @@ export function GameHUD({ room, onEndRun }: GameHUDProps) {
   const isCoopRef = useRef(false)
   const [teammates, setTeammates] = useState<TeammateStatus[]>([])
   const [localEliminated, setLocalEliminated] = useState(false)
+  const [localDowned, setLocalDowned] = useState(false)
+  const [localBleedOutMs, setLocalBleedOutMs] = useState(0)
+  const [revivingName, setRevivingName] = useState<string | null>(null)
   const [voteActivity, setVoteActivity] = useState<VoteActivity>({
     voteOpen: false,
     paused: false,
@@ -152,7 +156,30 @@ export function GameHUD({ room, onEndRun }: GameHUDProps) {
 
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const me = myPlayer as any
-        setLocalEliminated(me?.eliminated === true)
+        const meEliminated = me?.eliminated === true
+        const meDowned = me?.downed === true
+        setLocalEliminated(meEliminated)
+        setLocalDowned(meDowned)
+        setLocalBleedOutMs(meDowned ? (me?.bleedOutRemainingMs ?? 0) : 0)
+
+        // Rescuer label: the nearest downed teammate with revive progress whose
+        // toroidal distance to the ALIVE local player is within REVIVE_RADIUS
+        // (same shared constant + metric the server sim uses; sub-units on wire).
+        let reviving: string | null = null
+        if (me && !meDowned && !meEliminated && me.hp > 0) {
+          let bestDistSq = REVIVE_RADIUS * REVIVE_RADIUS
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          for (const [id, p] of state.players as Map<string, any>) {
+            if (id === room.sessionId) continue
+            if (p.downed !== true || !((p.reviveProgressTicks ?? 0) > 0)) continue
+            const d = toroidalDistSq(me.x, me.y, p.x, p.y)
+            if (d <= bestDistSq) {
+              bestDistSq = d
+              reviving = lobby?.get(id)?.displayName || 'Player'
+            }
+          }
+        }
+        setRevivingName(reviving)
       }
     }
 
@@ -183,9 +210,20 @@ export function GameHUD({ room, onEndRun }: GameHUDProps) {
 
   return (
     <div className={styles.overlay}>
-      {/* Top-left: HP cluster */}
+      {/* Co-op local downed vignette/banner + spectate scrim — rendered FIRST so
+          every HUD cluster below paints above these full-screen layers */}
+      {isCoop && (
+        <DownedOverlay
+          localDowned={localDowned}
+          localBleedOutMs={localBleedOutMs}
+          localEliminated={localEliminated}
+        />
+      )}
+
+      {/* Top-left: HP cluster (co-op: hidden while spectating, UI-SPEC §8) */}
       <div className={styles.topLeft}>
-        <HudHpBar hp={hp} maxHp={maxHp} />
+        {isCoop && revivingName && <RevivingLabel name={revivingName} />}
+        {!localEliminated && <HudHpBar hp={hp} maxHp={maxHp} />}
         {isCoop && teammates.length > 0 && (
           <div className={styles.teammates}>
             <HudTeammates teammates={teammates} />
@@ -195,6 +233,7 @@ export function GameHUD({ room, onEndRun }: GameHUDProps) {
 
       {/* Top-center: Run timer + boss HP bar */}
       <div className={styles.topCenter}>
+        {isCoop && localEliminated && <SpectateChip />}
         <HudTimer elapsedMs={elapsedMs} />
         {boss && <HudBossBar name={boss.name} hp={boss.hp} maxHp={boss.maxHp} />}
       </div>
@@ -202,7 +241,9 @@ export function GameHUD({ room, onEndRun }: GameHUDProps) {
       {/* Top-right: XP cluster + LogoutButton + End Run */}
       {/* Co-op: raised above the PAUSED scrim so End Run / Logout stay reachable */}
       <div className={isCoop ? `${styles.topRight} ${styles.topRightCoop}` : styles.topRight}>
-        <HudXpBar xp={xp} threshold={getXpThresholdForLevel(level)} level={level} />
+        {!localEliminated && (
+          <HudXpBar xp={xp} threshold={getXpThresholdForLevel(level)} level={level} />
+        )}
         <div className={styles.logoutWrapper}>
           <LogoutButton />
         </div>
