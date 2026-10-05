@@ -5,13 +5,15 @@ import { useAuth } from '../components/auth/AuthProvider.js'
 import { SoloRunStartScreen, CLASS_WEAPON } from '../components/game/SoloRunStartScreen.js'
 import { RoomBrowserScreen, ROOM_ERROR_COPY } from '../components/game/RoomBrowserScreen.js'
 import type { RoomListing } from '../components/game/RoomBrowserScreen.js'
+import { LobbyScreen } from '../components/game/LobbyScreen.js'
+import type { LobbyPlayer } from '../components/game/LobbyScreen.js'
 import { PhaserGame } from '../components/game/PhaserGame.js'
 import type { GameOverData } from '../components/game/PhaserGame.js'
 import { GameHUD } from '../components/game/GameHUD.js'
 import { GameOverScreen } from '../components/game/GameOverScreen.js'
 import { UpgradePicker } from '../components/ui/UpgradePicker.js'
 import { SlotFullModal } from '../components/ui/SlotFullModal.js'
-import type { UpgradeOption } from '@game/shared'
+import type { CharacterSelect, UpgradeOption } from '@game/shared'
 import styles from './GamePage.module.css'
 
 export type GamePhase =
@@ -34,6 +36,18 @@ export type GameError =
 
 /** GET /colyseus/rooms poll cadence while the room browser is open. */
 const ROOM_POLL_MS = 5000
+/** How long the "You are now the host" toast stays up. */
+const HOST_TOAST_MS = 3000
+/**
+ * Co-op full-squad defeat (roomPhase 'ended'): GameScene normally emits the
+ * gameover itself (plan 06-12 gates it on state.result === 'defeated'). If it
+ * has not within this window, GamePage leaves the room so GameScene's existing
+ * onLeave → emitGameOver path produces the Phase 5 defeat summary with full
+ * stats (state.result is already 'defeated' — 06-09 mirrors it before 'ended').
+ */
+const ENDED_LEAVE_GRACE_MS = 750
+
+const IN_RUN_PHASES: ReadonlySet<GamePhase> = new Set(['ACTIVE', 'UPGRADING', 'SLOT_FULL'])
 
 /** What the room browser asked to connect to. */
 type CoopTarget =
@@ -47,8 +61,36 @@ type CoopTarget =
  * also read room state untyped; the client never imports the server schema).
  */
 interface CoopWireState {
+  /** 'lobby' | 'active' | 'ended' (solo is always 'active'). */
   roomPhase?: string
+  /** state.lobby — keyed by sessionId; mirrors the live squad (06-09 deletes leavers). */
+  lobby?: Map<
+    string,
+    {
+      displayName?: string
+      classId?: string
+      weaponId?: string
+      ready?: boolean
+      isHost?: boolean
+    }
+  >
   players?: Map<string, { weapons?: string[]; passives?: string[] }>
+}
+
+/** Snapshot state.lobby into plain objects (live schema instances would not re-render). */
+function toLobbyPlayers(lobby: CoopWireState['lobby']): LobbyPlayer[] {
+  const players: LobbyPlayer[] = []
+  lobby?.forEach((entry, sessionId) => {
+    players.push({
+      sessionId,
+      displayName: entry.displayName ?? 'Player',
+      classId: entry.classId ?? '',
+      weaponId: entry.weaponId ?? '',
+      ready: entry.ready === true,
+      isHost: entry.isHost === true,
+    })
+  })
+  return players
 }
 
 /** Defensive guard for one GET /rooms entry (plan 06-08 listing contract). */
@@ -122,6 +164,9 @@ export function GamePage() {
   const [joinError, setJoinError] = useState<string | null>(null)
   const [createdCode, setCreatedCode] = useState<string | null>(null)
   const [browserBusy, setBrowserBusy] = useState(false)
+  const [lobbyPlayers, setLobbyPlayers] = useState<LobbyPlayer[]>([])
+  const [lobbyRoomCode, setLobbyRoomCode] = useState<string | null>(null)
+  const [hostToast, setHostToast] = useState(false)
 
   // Refs read from async/room callbacks (never stale React state).
   const phaseRef = useRef<GamePhase>(phase)
@@ -134,6 +179,13 @@ export function GamePage() {
   useEffect(() => {
     phaseRef.current = phase
   }, [phase])
+
+  // host_changed → toast; LobbyScreen has no timer of its own (06-10 note 3).
+  useEffect(() => {
+    if (!hostToast) return
+    const timer = window.setTimeout(() => setHostToast(false), HOST_TOAST_MS)
+    return () => window.clearTimeout(timer)
+  }, [hostToast])
 
   async function handleSoloRun() {
     setPhase('CONNECTING')
@@ -295,12 +347,38 @@ export function GamePage() {
   }, [])
 
   /**
-   * Wires the in-run listeners on a freshly joined co-op room. Mirrors the solo
-   * listener block (weapons/passives + progression messages) — handleSoloRun is
-   * intentionally left verbatim so the solo path stays byte-identical.
+   * Wires every listener on a freshly joined co-op room, imperatively at join
+   * time (same shape as solo — handleSoloRun is intentionally left verbatim so
+   * the solo path stays byte-identical):
+   *   - lobby roster from state.lobby (only while roomPhase is 'lobby')
+   *   - roomPhase 'active' → ACTIVE (there is no "run started" message — 06-08)
+   *   - roomPhase 'ended'  → defeat summary via the leave fallback (06-09)
+   *   - weapons/passives + levelup/slot_full/rare_event/upgrade_applied (as solo)
+   *   - host_changed → toast; lobby-only onLeave → back to the browser
    * Returns a teardown that removes everything it attached.
    */
   function attachCoopListeners(room: Room): () => void {
+    let runStarted = false
+    let endedTimer: number | null = null
+    let endedSeen = false
+
+    // Server dispose/kick while still in the lobby. Removed when the run starts
+    // (so End Run / defeat leaves never bounce to the browser) and by teardown
+    // before an intentional Leave Lobby.
+    const onLobbyLeave = () => {
+      if (roomRef.current !== room) return
+      coopTeardownRef.current?.()
+      coopTeardownRef.current = null
+      roomRef.current = null
+      setLobbyPlayers([])
+      setLobbyRoomCode(null)
+      setHostToast(false)
+      setCreatedCode(null)
+      setJoinError(ROOM_ERROR_COPY.SERVER_ERROR)
+      setPhase('ROOM_BROWSER')
+    }
+    room.onLeave(onLobbyLeave)
+
     const onState = (stateUpdate: unknown) => {
       const state = stateUpdate as CoopWireState
       const myPlayer = state.players?.get(room.sessionId)
@@ -308,10 +386,34 @@ export function GamePage() {
         if (myPlayer.weapons) setWeapons(Array.from(myPlayer.weapons))
         if (myPlayer.passives) setPassives(Array.from(myPlayer.passives))
       }
+
+      if (state.roomPhase === 'lobby') {
+        setLobbyPlayers(toLobbyPlayers(state.lobby))
+      } else if (state.roomPhase === 'active' && !runStarted) {
+        // Start transition: PhaserGame/GameHUD mount exactly as in solo.
+        runStarted = true
+        room.onLeave.remove(onLobbyLeave)
+        setPhase('ACTIVE')
+      } else if (state.roomPhase === 'ended' && !endedSeen) {
+        endedSeen = true
+        room.onLeave.remove(onLobbyLeave)
+        endedTimer = window.setTimeout(() => {
+          endedTimer = null
+          // Still in-run on this room → GameScene did not emit; leaving routes
+          // its onLeave → emitGameOver (result 'defeated'). Already GAME-OVER →
+          // GameScene emitted and left itself; nothing to do.
+          if (roomRef.current === room && IN_RUN_PHASES.has(phaseRef.current)) {
+            void room.leave()
+          }
+        }, ENDED_LEAVE_GRACE_MS)
+      }
     }
     room.onStateChange(onState)
 
     const offs = [
+      room.onMessage('host_changed', (data: { hostSessionId?: string }) => {
+        if (data?.hostSessionId === room.sessionId) setHostToast(true)
+      }),
       room.onMessage('levelup', (data: { options: UpgradeOption[] }) => {
         setPendingChoices(data.options)
         setPhase('UPGRADING')
@@ -333,7 +435,10 @@ export function GamePage() {
 
     return () => {
       room.onStateChange.remove(onState)
+      room.onLeave.remove(onLobbyLeave)
       for (const off of offs) off()
+      if (endedTimer !== null) window.clearTimeout(endedTimer)
+      endedTimer = null
     }
   }
 
@@ -396,19 +501,71 @@ export function GamePage() {
       roomRef.current = room
       setWeapons([])
       setPassives([])
+      setHostToast(false)
+      setLobbyPlayers(toLobbyPlayers((room.state as CoopWireState | undefined)?.lobby))
       coopTeardownRef.current = attachCoopListeners(room)
+
+      // The server seeds lobby entries as human/magic_wand, which is not a real
+      // loadout (CLASS_WEAPON.human is knife). Claim a real one immediately —
+      // the player's solo-screen pick, else human — so the slot never shows the
+      // server default (06-10 note 1). CharacterSelectSchema payload shape.
+      const classId: CharacterSelect['classId'] = selectedClassId ?? 'human'
+      room.send('select_class', { classId, weaponId: CLASS_WEAPON[classId] })
 
       // roomId IS the 6-char code for coop rooms (06-08). Private creators see
       // it in the browser's create panel and as the lobby chip; code joiners
       // get the chip too so they can re-share it.
       const isPrivateCreate = target.kind === 'create' && target.isPrivate
       setCreatedCode(isPrivateCreate ? room.roomId : null)
+      setLobbyRoomCode(isPrivateCreate || target.kind === 'code' ? room.roomId : null)
       setPhase('LOBBY')
     } finally {
       connectingRef.current = false
       if (!unmountedRef.current) setBrowserBusy(false)
     }
   }
+
+  // ─── Co-op: lobby intents (server re-validates all of them — T-06-19) ──────
+
+  const handleToggleReady = useCallback(() => {
+    const room = roomRef.current
+    if (!room) return
+    // Read the local ready flag at click time from room state, not a render
+    // snapshot, so a fast double-click never sends the same value twice.
+    const state = room.state as CoopWireState | undefined
+    const current = state?.lobby?.get(room.sessionId)?.ready === true
+    room.send('ready', { ready: !current })
+  }, [])
+
+  const handleLobbySelectClass = useCallback(
+    (classId: CharacterSelect['classId'], weaponId: CharacterSelect['weaponId']) => {
+      roomRef.current?.send('select_class', { classId, weaponId })
+      // Remembered so a later lobby claims the same loadout on join.
+      setSelectedClassId(classId)
+    },
+    []
+  )
+
+  const handleStartRun = useCallback(() => {
+    // `{}` is required: StartRunSchema (z.object({})) drops a bare send.
+    roomRef.current?.send('start_run', {})
+  }, [])
+
+  const handleLeaveLobby = useCallback(() => {
+    const room = roomRef.current
+    // Tear down first: removes the lobby onLeave so this intentional leave is
+    // not reported as a disconnect.
+    coopTeardownRef.current?.()
+    coopTeardownRef.current = null
+    roomRef.current = null
+    setLobbyPlayers([])
+    setLobbyRoomCode(null)
+    setHostToast(false)
+    setCreatedCode(null)
+    setJoinError(null)
+    setPhase('ROOM_BROWSER')
+    void room?.leave()
+  }, [])
 
   const handleSelectClass = useCallback((classId: 'vampire' | 'human' | 'dwarf') => {
     setSelectedClassId(classId)
@@ -451,6 +608,9 @@ export function GamePage() {
     // GAME-OVER → CHARACTER_SELECT: deliberate pause — player must re-select
     // a loadout and click "Start Run" again. Selection is reset so a new run
     // always starts with a fresh, nothing-selected loadout screen.
+    // Co-op: drop the finished room's listeners (no-op after a solo run).
+    coopTeardownRef.current?.()
+    coopTeardownRef.current = null
     setSelectedClassId(null)
     setPhase('CHARACTER_SELECT')
   }, [])
@@ -492,6 +652,18 @@ export function GamePage() {
           onJoinByCode={(code) => void handleCoopConnect({ kind: 'code', code })}
           onRefresh={handleRefreshRooms}
           onBack={handleBrowserBack}
+        />
+      )}
+      {phase === 'LOBBY' && roomRef.current && (
+        <LobbyScreen
+          players={lobbyPlayers}
+          localSessionId={roomRef.current.sessionId}
+          roomCode={lobbyRoomCode}
+          hostToast={hostToast}
+          onSelectClass={handleLobbySelectClass}
+          onToggleReady={handleToggleReady}
+          onStart={handleStartRun}
+          onLeave={handleLeaveLobby}
         />
       )}
       {(phase === 'ACTIVE' || phase === 'UPGRADING' || phase === 'SLOT_FULL') &&
