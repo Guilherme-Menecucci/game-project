@@ -32,6 +32,14 @@ if (corsOrigin) {
   }
 }
 
+// Minimal structural response type for the express routes below: @types/express
+// is not a dependency (initializeExpress's app is typed via an unresolved
+// express import), and this plan adds no packages (T-06-SC).
+interface JsonResponse {
+  json(body: unknown): void
+  status(code: number): JsonResponse
+}
+
 export const appConfig = config({
   // rooms requires Record<string, RegisteredHandler>.
   // defineRoom() wraps the class in a RegisteredHandler — required by ConfigOptions.rooms.
@@ -48,5 +56,26 @@ export const appConfig = config({
   // @colyseus/testing boot() stays compatible.
   initializeExpress: (app) => {
     app.use(helmet())
+
+    // Public co-op room browser (ROOM-01). @colyseus/sdk 0.17 has no
+    // client.getAvailableRooms(), so the listing is served from the matchmaker
+    // cache (06-RESEARCH.md Pattern 2). private:false + locked:false means
+    // only joinable public lobbies appear — private rooms never leak (T-06-13)
+    // and started runs are locked. Only listing fields are exposed.
+    app.get('/rooms', async (_req: unknown, res: JsonResponse) => {
+      try {
+        const rooms = await matchMaker.query({ name: 'coop_room', private: false, locked: false })
+        res.json(
+          rooms.map((r) => ({
+            roomId: r.roomId,
+            clients: r.clients,
+            maxClients: r.maxClients,
+            hostName: (r.metadata as { hostName?: string } | undefined)?.hostName ?? 'Unknown',
+          }))
+        )
+      } catch {
+        res.status(500).json({ error: 'room listing unavailable' })
+      }
+    })
   },
 })

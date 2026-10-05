@@ -19,7 +19,12 @@
  */
 import { matchMaker } from '@colyseus/core'
 import type { Client } from '@colyseus/core'
-import { CharacterSelectSchema, CoopCreateOptionsSchema, ReadySchema } from '@game/shared'
+import {
+  CharacterSelectSchema,
+  CoopCreateOptionsSchema,
+  ReadySchema,
+  StartRunSchema,
+} from '@game/shared'
 import { BaseGameRoom } from './BaseGameRoom.js'
 import { LobbyPlayerSchema } from '../schema/GameSchema.js'
 import { generateRoomCode } from '../lib/roomCode.js'
@@ -107,6 +112,51 @@ export class CoopRoom extends BaseGameRoom {
       entry.classId = result.data.classId
       entry.weaponId = result.data.weaponId
     })
+
+    // StartRunSchema rejects undefined — clients must send room.send('start_run', {}).
+    this.onMessage('start_run', (client: Client, data: unknown) => {
+      if (!this.allowMessage(client)) return
+      if (!StartRunSchema.safeParse(data).success) return
+      void this.tryStartRun(client).catch((err: unknown) => {
+        console.error('[CoopRoom] start_run failed', err)
+      })
+    })
+  }
+
+  /**
+   * Host-only, 2+ players, everyone ready (ROOM-03/04). Anything else is a
+   * silent drop. Host identity is server-derived (oldest client — T-06-11).
+   */
+  private async tryStartRun(client: Client): Promise<void> {
+    if (this.roomPhase !== 'lobby') return
+    if (this.clients[0]?.sessionId !== client.sessionId) return
+    if (this.clients.length < 2) return
+    const allReady = this.clients.every((c) => this.state.lobby.get(c.sessionId)?.ready === true)
+    if (!allReady) return
+
+    // Leave 'lobby' synchronously BEFORE awaiting lock(): a join completing
+    // during the await hits the onJoin guard, and a duplicate start_run
+    // cannot seed twice. The tick stays blocked until 'active'.
+    this.setRoomPhase('starting')
+    // No-arg lock() = explicit lock: a mid-run leave from a full room must not
+    // auto-unlock it (Pitfall 3, T-06-12).
+    await this.lock()
+
+    // Lobby-time inputs never reach the first simulated tick.
+    this.pendingInputs.clear()
+
+    for (const c of this.clients) {
+      const entry = this.state.lobby.get(c.sessionId)
+      this.seedPlayer(c, { classId: entry?.classId, weaponId: entry?.weaponId })
+    }
+
+    // Difficulty snapshot (06-07 contract, OQ2): set exactly once here and
+    // never recomputed on disconnect.
+    this.plainState.mode = 'coop'
+    this.plainState.playerCount = this.clients.length
+
+    // The lobby roster is intentionally kept (in-run HUD reads displayName).
+    this.setRoomPhase('active')
   }
 
   async onJoin(client: Client): Promise<void> {
