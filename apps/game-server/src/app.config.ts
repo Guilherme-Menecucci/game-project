@@ -12,6 +12,7 @@ import config from '@colyseus/tools'
 import { defineRoom, matchMaker } from '@colyseus/core'
 import helmet from 'helmet'
 import { SoloRoom } from './rooms/SoloRoom.js'
+import { CoopRoom } from './rooms/CoopRoom.js'
 import { env } from './lib/env.js'
 
 // Matchmake-route CORS pinning (Phase 6 Wave 0, T-06-04 mitigate).
@@ -37,6 +38,9 @@ export const appConfig = config({
   // Passing the raw SoloRoom class directly is a TypeScript compile error.
   rooms: {
     solo_room: defineRoom(SoloRoom),
+    // 2–4 player co-op (Phase 6). Joins land in the lobby phase only; the room
+    // lock()s on start_run (06-08, Pitfall 3). SoloRoom stays maxClients=1.
+    coop_room: defineRoom(CoopRoom),
   },
 
   // HTTP-layer hardening for the express routes (helmet defaults are safe for

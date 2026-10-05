@@ -234,18 +234,23 @@ export abstract class BaseGameRoom extends Room<{ state: GameStateSchema }> {
    * or from Authorization: Bearer header.
    *
    * Throws on invalid/expired tokens — Colyseus rejects the client connection.
+   *
+   * Returns { userId, displayName } (06-08): displayName is the server-attested
+   * lobby name carried in the game JWT (06-06, T-06-08) — verifyGameToken
+   * guarantees a non-empty string. Rooms read it from client.auth; a name in join
+   * options is never trusted.
    */
   static async onAuth(
     token: string,
     options: { token?: string },
     context: { token?: string }
-  ): Promise<{ userId: string }> {
+  ): Promise<{ userId: string; displayName: string }> {
     const authToken = context.token ?? options?.token ?? token
     if (!authToken) {
       throw new Error('Missing game token')
     }
     const payload = verifyGameToken(authToken)
-    return { userId: payload.userId }
+    return { userId: payload.userId, displayName: payload.displayName }
   }
 
   /**

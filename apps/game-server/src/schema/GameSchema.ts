@@ -92,6 +92,30 @@ export class BossSchema extends Schema {
   @type('uint8') declare telegraphTick: number // range 0-99, fits uint8
 }
 
+/**
+ * Co-op lobby roster entry (Phase 6, ROOM-01/04), keyed by sessionId in
+ * GameStateSchema.lobby. displayName is server-attested (from the game JWT via
+ * onAuth — never a client-sent name, T-06-08). Every field is explicitly
+ * assigned at construction so the first serialization always carries it
+ * (Phase 5 lesson: never-assigned fields are omitted from the wire).
+ */
+export class LobbyPlayerSchema extends Schema {
+  @type('string') declare displayName: string
+  @type('string') declare classId: string
+  @type('string') declare weaponId: string
+  @type('boolean') declare ready: boolean
+  @type('boolean') declare isHost: boolean
+
+  constructor() {
+    super()
+    this.displayName = ''
+    this.classId = 'human'
+    this.weaponId = 'magic_wand'
+    this.ready = false
+    this.isHost = false
+  }
+}
+
 export class GameStateSchema extends Schema {
   @type({ map: PlayerSchema }) declare players: MapSchema<PlayerSchema>
   @type({ map: EnemySchema }) declare enemies: MapSchema<EnemySchema>
@@ -103,6 +127,12 @@ export class GameStateSchema extends Schema {
   @type('uint32') declare elapsedMs: number
   @type('uint32') declare kills: number
   @type('string') declare result: string // '' | 'survived' | 'defeated'
+  // Phase 6 (06-08): 'lobby' | 'active'. Defaults to 'active' so solo rooms —
+  // which never enter a lobby — are semantically correct with zero SoloRoom edits.
+  @type('string') declare roomPhase: string
+  // Phase 6 (06-08): co-op lobby roster keyed by sessionId. Empty for solo. Kept
+  // intact in-run (the co-op HUD reads displayName from it).
+  @type({ map: LobbyPlayerSchema }) declare lobby: MapSchema<LobbyPlayerSchema>
 
   constructor() {
     super()
@@ -116,5 +146,7 @@ export class GameStateSchema extends Schema {
     this.elapsedMs = 0
     this.kills = 0
     this.result = ''
+    this.roomPhase = 'active'
+    this.lobby = new MapSchema<LobbyPlayerSchema>()
   }
 }
