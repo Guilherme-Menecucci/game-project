@@ -253,6 +253,27 @@ export class CoopRoom extends BaseGameRoom {
     // The leaver no longer counts: drop their vote and re-tally (needed may
     // shrink, so the vote can pass — or empty out and cancel — right here).
     if (this.pauseVote) this.evaluateVote()
+    this.releaseOrphanedPause()
+  }
+
+  /**
+   * Anti-griefing (T-06-15): a passed pause with NO alive voter left (everyone
+   * remaining is eliminated) could never be resumed — and while paused no tick
+   * runs, so the sim's full-squad defeat rule could never fire either. Release
+   * the pause; the next tick then detects defeat and ends the room.
+   */
+  private releaseOrphanedPause(): void {
+    if (!this.votePaused || this.roomPhase !== 'active') return
+    if (this.aliveVoterIds().length > 0) return
+    if (this.pauseVote) this.closeVote('cancelled', this.votesNeeded())
+    this.votePaused = false
+    this.broadcast('vote_pause_state', {
+      kind: 'resume',
+      votes: 0,
+      needed: this.votesNeeded(),
+      status: 'cancelled',
+      paused: false,
+    })
   }
 
   /**
