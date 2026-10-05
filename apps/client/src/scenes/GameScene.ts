@@ -12,11 +12,40 @@
  * Input (D-02):
  *   WASD + arrow keys. Normalized moveVector sent at 20Hz (INPUT_INTERVAL=50ms).
  *   aimAngle=0 (Phase 3 auto-aim). actionFlags=0.
+ *   While the registry 'inputLocked' flag is true (pick/slot-full modal, 06-11)
+ *   the send continues with a ZERO moveVector — never skipped, so no stale
+ *   non-zero vector can keep applying server-side.
+ *
+ * Co-op (Phase 6, 06-12):
+ *   Mode is latched from the wire: state.lobby is non-empty ONLY in co-op (solo
+ *   never writes it; co-op keeps the local player's own entry for as long as
+ *   they are in the room). players.size is NOT used — a mid-run leave deletes
+ *   the leaver's schema player, so it can drop back to 1 inside a co-op run.
+ *   - Camera follows the toroidal-aware squad centroid (computeCameraTarget)
+ *     with a manually lerped zoom (computeZoom, clamped 0.5..1.0).
+ *   - Downed players: amber tint @60% alpha + revive ring while being revived.
+ *   - Eliminated players: sprite hidden; an eliminated local player spectates
+ *     via the same centroid camera anchored on the first living teammate.
+ *   - Gameover: hp <= 0 is NOT game over (downed/eliminated); the run ends for
+ *     this client on state.result === 'defeated' (full-squad defeat) or via the
+ *     existing onLeave path (End Run / GamePage's 'ended' fallback).
  */
 import Phaser from 'phaser'
 import type { Room } from '@colyseus/sdk'
+import { computeCameraTarget, computeZoom, REVIVE_TICKS, WORLD_W } from '@game/shared'
 
 const toGU = (subUnits: number): number => subUnits / 1000
+
+/** UI-SPEC §7 in-world tokens (Phaser procedural, not CSS). */
+const DOWNED_TINT = 0xe08a3c
+const DOWNED_ALPHA = 0.6
+const REVIVE_RING_COLOR = 0x4ade80
+const REVIVE_RING_TRACK_COLOR = 0xffffff
+const REVIVE_RING_TRACK_ALPHA = 0.15
+const REVIVE_RING_RADIUS = 24 // game units
+const REVIVE_RING_WIDTH = 4
+/** Per-frame zoom lerp factor (manual lerp — zoomTo tweens per tick fight each other). */
+const ZOOM_LERP = 0.08
 
 /** Map a player's classId (D-09) to the per-class atlas frame; falls back to the generic 'player' frame. */
 const frameForClassId = (classId: string | undefined): string => {
@@ -66,6 +95,17 @@ export class GameScene extends Phaser.Scene {
   private lastPassives: string[] = []
   private lastLevel = 1
   private lastXp = 0
+
+  // --- Co-op (06-12) ---
+  /** Latched true on the first sync where state.lobby is non-empty (co-op only). */
+  private isCoop = false
+  /** Camera follow switched from the local sprite to cameraTarget (once). */
+  private followSwitched = false
+  /** Centroid follow target in game units (plain object — Phaser follows any {x,y}). */
+  private cameraTarget = { x: 0, y: 0 }
+  private targetZoom = 1
+  /** One lazily-created revive ring per downed-and-being-revived player. */
+  private reviveRings = new Map<string, Phaser.GameObjects.Graphics>()
 
   constructor() {
     super({ key: 'GameScene' })
@@ -137,6 +177,12 @@ export class GameScene extends Phaser.Scene {
 
     this.auraGraphics.clear()
 
+    // Co-op latch: state.lobby is empty for solo, non-empty in co-op (own entry).
+    const lobby = state.lobby as Map<string, unknown> | undefined
+    if (!this.isCoop && lobby !== undefined && lobby.size > 0) {
+      this.isCoop = true
+    }
+
     // --- Players ---
     for (const [key, player] of players) {
       if (key === this.localPlayerId) {
@@ -155,7 +201,8 @@ export class GameScene extends Phaser.Scene {
         const sprite = this.add.sprite(toGU(player.x), toGU(player.y), 'entities', frame)
         sprite.setDepth(2)
         this.playerSprites.set(key, sprite)
-        if (key === this.localPlayerId) {
+        // Co-op follows the squad centroid instead (updateCoopCamera).
+        if (key === this.localPlayerId && !this.isCoop) {
           this.cameras.main.startFollow(sprite, true, 0.1, 0.1)
         }
       } else {
@@ -163,11 +210,17 @@ export class GameScene extends Phaser.Scene {
         sprite.setPosition(toGU(player.x), toGU(player.y))
       }
 
+      // Eliminated co-op players are spectators, not corpses: no sprite, no aura.
+      const eliminated = this.isCoop && player.eliminated === true
+      if (this.isCoop) {
+        this.applyCoopPlayerVisuals(key, player, this.playerSprites.get(key)!)
+      }
+
       let garlicItem: string | undefined
       if (player.weapons && typeof player.weapons.find === 'function') {
         garlicItem = player.weapons.find((w: string) => w.startsWith('garlic'))
       }
-      if (garlicItem) {
+      if (garlicItem && !eliminated) {
         const levelStr = garlicItem.split(':')[1]
         const level = levelStr ? parseInt(levelStr, 10) : 1
         const garlicRadiusMults = [0.6, 0.8, 1.0, 1.2, 1.5]
@@ -181,8 +234,9 @@ export class GameScene extends Phaser.Scene {
         this.auraGraphics.strokeCircle(toGU(player.x), toGU(player.y), radius)
       }
 
-      // Game-over: local player HP reaches 0
-      if (key === this.localPlayerId && player.hp <= 0 && !this.gameOverEmitted) {
+      // Game-over: local player HP reaches 0 (solo only — in co-op hp 0 means
+      // downed or eliminated, and the run continues for the squad).
+      if (!this.isCoop && key === this.localPlayerId && player.hp <= 0 && !this.gameOverEmitted) {
         this.emitGameOver(player)
       }
     }
@@ -191,6 +245,20 @@ export class GameScene extends Phaser.Scene {
       if (!players.has(key)) {
         this.playerSprites.get(key)!.destroy()
         this.playerSprites.delete(key)
+      }
+    }
+    for (const key of this.reviveRings.keys()) {
+      if (!players.has(key)) {
+        this.reviveRings.get(key)!.destroy()
+        this.reviveRings.delete(key)
+      }
+    }
+
+    if (this.isCoop) {
+      this.updateCoopCamera(players)
+      // Full-squad defeat: every client shows the Phase 5 defeat summary.
+      if (state.result === 'defeated' && !this.gameOverEmitted) {
+        this.emitGameOver(players.get(this.localPlayerId))
       }
     }
 
@@ -334,6 +402,105 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
+  /**
+   * Co-op in-world state visuals (UI-SPEC §7/§8), driven only by wire fields:
+   * downed → amber tint @60% alpha (+ revive ring while reviveProgressTicks > 0),
+   * eliminated → sprite hidden. Cleared back to normal on revive.
+   */
+  private applyCoopPlayerVisuals(
+    key: string,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    player: any,
+    sprite: Phaser.GameObjects.Sprite
+  ): void {
+    const eliminated = player.eliminated === true
+    const downed = !eliminated && player.downed === true
+
+    sprite.setVisible(!eliminated)
+    if (downed) {
+      sprite.setTint(DOWNED_TINT)
+      sprite.setAlpha(DOWNED_ALPHA)
+    } else {
+      sprite.clearTint()
+      sprite.setAlpha(1)
+    }
+
+    const progressTicks = (player.reviveProgressTicks as number | undefined) ?? 0
+    if (downed && progressTicks > 0) {
+      let ring = this.reviveRings.get(key)
+      if (!ring) {
+        ring = this.add.graphics()
+        ring.setDepth(2.6) // above player sprites (2) and the aura layer (1.5)
+        this.reviveRings.set(key, ring)
+      }
+      const x = toGU(player.x)
+      const y = toGU(player.y)
+      const frac = Math.min(1, progressTicks / REVIVE_TICKS)
+      const start = -Math.PI / 2
+      ring.clear()
+      ring.lineStyle(REVIVE_RING_WIDTH, REVIVE_RING_TRACK_COLOR, REVIVE_RING_TRACK_ALPHA)
+      ring.strokeCircle(x, y, REVIVE_RING_RADIUS)
+      ring.lineStyle(REVIVE_RING_WIDTH, REVIVE_RING_COLOR, 1)
+      ring.beginPath()
+      ring.arc(x, y, REVIVE_RING_RADIUS, start, start + frac * Math.PI * 2, false)
+      ring.strokePath()
+    } else {
+      const ring = this.reviveRings.get(key)
+      if (ring) {
+        ring.destroy()
+        this.reviveRings.delete(key)
+      }
+    }
+  }
+
+  /**
+   * Co-op centroid camera (ROOM-05/09). Anchor = the local player, or — when
+   * the local player is eliminated (spectating) — the first living player.
+   * Teammates = every OTHER non-eliminated player (downed still counts). The
+   * centroid is kept in the anchor's frame and NOT wrapped: sprites render at
+   * raw [0, 4096) positions, so wrapping could park the camera on the far side
+   * of the world from the anchor; the camera bounds clamp it instead.
+   */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private updateCoopCamera(players: Map<string, any>): void {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const living: Array<[string, any]> = []
+    for (const [key, p] of players) {
+      if (p.eliminated !== true) living.push([key, p])
+    }
+    const local = players.get(this.localPlayerId)
+    const anchorKey =
+      local !== undefined && local.eliminated !== true ? this.localPlayerId : living[0]?.[0]
+    // Nobody left alive: leave the camera where it is (defeat is imminent).
+    if (anchorKey === undefined) return
+
+    const anchor = players.get(anchorKey)
+    const teammates = living
+      .filter(([key]) => key !== anchorKey)
+      .map(([, p]) => ({ x: p.x as number, y: p.y as number }))
+    const target = computeCameraTarget(
+      { x: anchor.x as number, y: anchor.y as number },
+      teammates,
+      WORLD_W // square world (WORLD_W === WORLD_H)
+    )
+
+    // Write the target BEFORE the first startFollow: it snaps scroll to it.
+    this.cameraTarget.x = toGU(target.x)
+    this.cameraTarget.y = toGU(target.y)
+    this.targetZoom = computeZoom(
+      toGU(target.maxAbsDx),
+      toGU(target.maxAbsDy),
+      this.scale.width,
+      this.scale.height
+    )
+
+    if (!this.followSwitched) {
+      this.followSwitched = true
+      // roundPixels false: non-integer zoom breaks the rounding fix (Pattern 7).
+      this.cameras.main.startFollow(this.cameraTarget, false, 0.1, 0.1)
+    }
+  }
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private emitGameOver(player: any): void {
     this.gameOverEmitted = true
@@ -387,6 +554,22 @@ export class GameScene extends Phaser.Scene {
     if (mx !== 0 && my !== 0) {
       mx *= 0.7071
       my *= 0.7071
+    }
+
+    // Pick/slot-full modal open (06-11 registry contract): keep sending, but
+    // with a zero moveVector so no stale vector keeps applying server-side.
+    if (this.game.registry.get('inputLocked') === true) {
+      mx = 0
+      my = 0
+    }
+
+    // Co-op dynamic zoom: manual per-frame lerp toward the computed target.
+    if (this.isCoop) {
+      const cam = this.cameras.main
+      const diff = this.targetZoom - cam.zoom
+      if (diff !== 0) {
+        cam.setZoom(Math.abs(diff) < 0.001 ? this.targetZoom : cam.zoom + diff * ZOOM_LERP)
+      }
     }
 
     this.inputTimer += delta
