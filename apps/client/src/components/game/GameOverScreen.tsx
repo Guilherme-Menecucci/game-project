@@ -17,9 +17,22 @@ interface GameOverStats {
   weaponStats?: Record<string, { totalDamage: number; acquiredAtMs: number }>
 }
 
+/**
+ * Co-op variant (06-15): the summary is shown over a LIVE room after a
+ * full-squad defeat. Each player decides for themselves only.
+ */
+export interface GameOverCoopActions {
+  /** True once the server has reopened the room as a lobby (roomPhase 'lobby'). */
+  canReturn: boolean
+  onReturnToLobby: () => void
+  onLeave: () => void
+}
+
 interface GameOverScreenProps {
   stats: GameOverStats
   onRetry: () => void
+  /** Present only for a co-op defeat with the room still connected. */
+  coop?: GameOverCoopActions
 }
 
 /**
@@ -28,8 +41,13 @@ interface GameOverScreenProps {
  * SummaryPanel (time/kills/damage/result) and BuildPanel (loadout grid +
  * per-weapon Total Damage/DPS). Action buttons stay as fixed DOM siblings
  * of the Canvas so they are always clickable regardless of camera/Html quirks.
+ *
+ * Co-op (06-15): with the `coop` prop the actions are "Back to Lobby" (primary,
+ * disabled as "Returning to lobby…" until the server reopened the lobby) and
+ * "Leave Squad" (secondary). Without it (solo, or a co-op player who already
+ * left via End Run) the Try Again / Exit to Home actions are unchanged.
  */
-export function GameOverScreen({ stats, onRetry }: GameOverScreenProps) {
+export function GameOverScreen({ stats, onRetry, coop }: GameOverScreenProps) {
   const navigate = useNavigate()
 
   function handleExit() {
@@ -100,14 +118,30 @@ export function GameOverScreen({ stats, onRetry }: GameOverScreenProps) {
       </div>
 
       {/* Action buttons — fixed DOM above the Canvas, always clickable */}
-      <div className={styles.actions}>
-        <button className={styles.retryBtn} type="button" onClick={onRetry}>
-          Try Again
-        </button>
-        <button className={styles.exitLink} type="button" onClick={handleExit}>
-          Exit to Home
-        </button>
-      </div>
+      {coop ? (
+        <div className={styles.actions}>
+          <button
+            className={styles.retryBtn}
+            type="button"
+            onClick={coop.onReturnToLobby}
+            disabled={!coop.canReturn}
+          >
+            {coop.canReturn ? 'Back to Lobby' : 'Returning to lobby…'}
+          </button>
+          <button className={styles.secondaryBtn} type="button" onClick={coop.onLeave}>
+            Leave Squad
+          </button>
+        </div>
+      ) : (
+        <div className={styles.actions}>
+          <button className={styles.retryBtn} type="button" onClick={onRetry}>
+            Try Again
+          </button>
+          <button className={styles.exitLink} type="button" onClick={handleExit}>
+            Exit to Home
+          </button>
+        </div>
+      )}
     </>
   )
 }

@@ -41,11 +41,12 @@ const HOST_TOAST_MS = 3000
 /**
  * Co-op full-squad defeat (roomPhase 'ended'): GameScene normally emits the
  * gameover itself (plan 06-12 gates it on state.result === 'defeated'). If it
- * has not within this window, GamePage leaves the room so GameScene's existing
- * onLeave → emitGameOver path produces the Phase 5 defeat summary with full
- * stats (state.result is already 'defeated' — 06-09 mirrors it before 'ended').
+ * has not within this window, GamePage builds the defeat summary from room
+ * state itself. The room is NEVER left here (06-15): it survives the defeat
+ * and reopens as a lobby ~2s later (CoopRoom.RETURN_TO_LOBBY_DELAY_MS), so the
+ * fallback must fire well before the server wipes the run state.
  */
-const ENDED_LEAVE_GRACE_MS = 750
+const ENDED_SUMMARY_GRACE_MS = 750
 
 const IN_RUN_PHASES: ReadonlySet<GamePhase> = new Set(['ACTIVE', 'UPGRADING', 'SLOT_FULL'])
 
@@ -74,7 +75,45 @@ interface CoopWireState {
       isHost?: boolean
     }
   >
-  players?: Map<string, { weapons?: string[]; passives?: string[] }>
+  players?: Map<
+    string,
+    {
+      weapons?: string[]
+      passives?: string[]
+      level?: number
+      xp?: number
+      weaponStats?: Map<string, { totalDamage?: number; acquiredAtMs?: number }>
+    }
+  >
+  elapsedMs?: number
+  /** Squad kills (enemy deaths) — the fallback summary's best-effort kill count. */
+  kills?: number
+}
+
+/**
+ * Defeat summary built from room state (06-15 fallback when GameScene did not
+ * emit its own gameover in time). killCount is the squad's state.kills — best
+ * effort; GameScene's own emit counts kills from its enemy diff.
+ */
+function defeatSummaryFromState(state: CoopWireState | undefined, sessionId: string): GameOverData {
+  const me = state?.players?.get(sessionId)
+  const weaponStats: Record<string, { totalDamage: number; acquiredAtMs: number }> = {}
+  me?.weaponStats?.forEach((stats, slot) => {
+    weaponStats[slot] = {
+      totalDamage: stats.totalDamage ?? 0,
+      acquiredAtMs: stats.acquiredAtMs ?? 0,
+    }
+  })
+  return {
+    killCount: state?.kills ?? 0,
+    elapsedMs: state?.elapsedMs ?? 0,
+    level: me?.level ?? 1,
+    xp: me?.xp ?? 0,
+    weapons: me?.weapons ? Array.from(me.weapons) : [],
+    passives: me?.passives ? Array.from(me.passives) : [],
+    result: 'defeated',
+    weaponStats,
+  }
 }
 
 /** Snapshot state.lobby into plain objects (live schema instances would not re-render). */
@@ -167,6 +206,12 @@ export function GamePage() {
   const [lobbyPlayers, setLobbyPlayers] = useState<LobbyPlayer[]>([])
   const [lobbyRoomCode, setLobbyRoomCode] = useState<string | null>(null)
   const [hostToast, setHostToast] = useState(false)
+  // Co-op summary over a live room (06-15): true while GAME-OVER shows a
+  // full-squad defeat and this client is still connected to the room.
+  const [coopSummary, setCoopSummary] = useState(false)
+  // Live server roomPhase ('lobby' | 'active' | 'ended') — 'lobby' after
+  // 'ended' means the server reopened the room and Back to Lobby is enabled.
+  const [coopRoomPhase, setCoopRoomPhase] = useState<string | null>(null)
 
   // Refs read from async/room callbacks (never stale React state).
   const phaseRef = useRef<GamePhase>(phase)
@@ -175,6 +220,8 @@ export function GamePage() {
   const pollAbortRef = useRef<AbortController | null>(null)
   /** Removes every listener attached to the current co-op room. */
   const coopTeardownRef = useRef<(() => void) | null>(null)
+  /** False once the co-op room's connection dropped after the run started. */
+  const coopLiveRef = useRef(false)
 
   useEffect(() => {
     phaseRef.current = phase
@@ -352,19 +399,32 @@ export function GamePage() {
    * the solo path stays byte-identical):
    *   - lobby roster from state.lobby (only while roomPhase is 'lobby')
    *   - roomPhase 'active' → ACTIVE (there is no "run started" message — 06-08)
-   *   - roomPhase 'ended'  → defeat summary via the leave fallback (06-09)
+   *   - roomPhase 'ended'  → defeat summary over the LIVE room (06-15): the
+   *     room is never left; GameScene emits, else a state-built fallback
+   *   - live roomPhase mirrored into React (enables Back to Lobby on 'lobby')
    *   - weapons/passives + levelup/slot_full/rare_event/upgrade_applied (as solo)
-   *   - host_changed → toast; lobby-only onLeave → back to the browser
-   * Returns a teardown that removes everything it attached.
+   *   - host_changed → toast; lobby-only onLeave → back to the browser;
+   *     in-run onLeave → the summary can no longer return to the lobby
+   * Returns an idempotent teardown that removes everything it attached. The
+   * same room is re-attached on Back to Lobby so the one-shot flags re-arm.
+   *
+   * NOTE (@colyseus/sdk 0.17.42 signal.remove): removing a callback that is not
+   * registered pops the LAST handler (indexOf -1), and removal swaps with the
+   * last handler — so every remove here is guarded by an "attached" flag and
+   * no handler removes a listener of the signal currently being invoked.
    */
   function attachCoopListeners(room: Room): () => void {
     let runStarted = false
     let endedTimer: number | null = null
     let endedSeen = false
+    let lobbyLeaveAttached = false
+    let runLeaveAttached = false
+    let tornDown = false
+    coopLiveRef.current = true
 
     // Server dispose/kick while still in the lobby. Removed when the run starts
-    // (so End Run / defeat leaves never bounce to the browser) and by teardown
-    // before an intentional Leave Lobby.
+    // (so End Run leaves never bounce to the browser) and by teardown before an
+    // intentional Leave Lobby.
     const onLobbyLeave = () => {
       if (roomRef.current !== room) return
       coopTeardownRef.current?.()
@@ -378,6 +438,23 @@ export function GamePage() {
       setPhase('ROOM_BROWSER')
     }
     room.onLeave(onLobbyLeave)
+    lobbyLeaveAttached = true
+    const detachLobbyLeave = () => {
+      if (!lobbyLeaveAttached) return
+      lobbyLeaveAttached = false
+      room.onLeave.remove(onLobbyLeave)
+    }
+
+    // Connection lost after the run started (intentional leaves tear down
+    // first, so they never land here). Mid-run, GameScene's own onLeave still
+    // produces the summary; either way the room can no longer bring this player
+    // back, so the summary falls back to the solo actions. No listener removal
+    // here — this runs inside the onLeave invoke (see NOTE above).
+    const onRunLeave = () => {
+      if (roomRef.current !== room) return
+      coopLiveRef.current = false
+      setCoopSummary(false)
+    }
 
     const onState = (stateUpdate: unknown) => {
       const state = stateUpdate as CoopWireState
@@ -386,26 +463,30 @@ export function GamePage() {
         if (myPlayer.weapons) setWeapons(Array.from(myPlayer.weapons))
         if (myPlayer.passives) setPassives(Array.from(myPlayer.passives))
       }
+      setCoopRoomPhase(state.roomPhase ?? null)
 
       if (state.roomPhase === 'lobby') {
         setLobbyPlayers(toLobbyPlayers(state.lobby))
       } else if (state.roomPhase === 'active' && !runStarted) {
         // Start transition: PhaserGame/GameHUD mount exactly as in solo.
         runStarted = true
-        room.onLeave.remove(onLobbyLeave)
+        detachLobbyLeave()
+        if (!runLeaveAttached) {
+          room.onLeave(onRunLeave)
+          runLeaveAttached = true
+        }
         setPhase('ACTIVE')
       } else if (state.roomPhase === 'ended' && !endedSeen) {
         endedSeen = true
-        room.onLeave.remove(onLobbyLeave)
+        detachLobbyLeave()
         endedTimer = window.setTimeout(() => {
           endedTimer = null
-          // Still in-run on this room → GameScene did not emit; leaving routes
-          // its onLeave → emitGameOver (result 'defeated'). Already GAME-OVER →
-          // GameScene emitted and left itself; nothing to do.
+          // Still in-run on this room → GameScene did not emit its gameover;
+          // show the defeat summary from room state. The room stays joined.
           if (roomRef.current === room && IN_RUN_PHASES.has(phaseRef.current)) {
-            void room.leave()
+            handleGameOver(defeatSummaryFromState(room.state as CoopWireState, room.sessionId))
           }
-        }, ENDED_LEAVE_GRACE_MS)
+        }, ENDED_SUMMARY_GRACE_MS)
       }
     }
     room.onStateChange(onState)
@@ -414,19 +495,25 @@ export function GamePage() {
       room.onMessage('host_changed', (data: { hostSessionId?: string }) => {
         if (data?.hostSessionId === room.sessionId) setHostToast(true)
       }),
+      // Pick messages never pull a finished run (summary over the live room,
+      // 06-15) back into ACTIVE.
       room.onMessage('levelup', (data: { options: UpgradeOption[] }) => {
+        if (endedSeen) return
         setPendingChoices(data.options)
         setPhase('UPGRADING')
       }),
       room.onMessage('slot_full', (data: { weapons: string[]; upgradeId: string }) => {
+        if (endedSeen) return
         setSlotFullPayload(data)
         setPhase('SLOT_FULL')
       }),
       room.onMessage('rare_event', (data: { options: UpgradeOption[] }) => {
+        if (endedSeen) return
         setPendingChoices(data.options)
         setPhase('UPGRADING')
       }),
       room.onMessage('upgrade_applied', () => {
+        if (endedSeen) return
         setPhase('ACTIVE')
         setPendingChoices([])
         setSlotFullPayload(null)
@@ -434,8 +521,14 @@ export function GamePage() {
     ]
 
     return () => {
+      if (tornDown) return
+      tornDown = true
       room.onStateChange.remove(onState)
-      room.onLeave.remove(onLobbyLeave)
+      detachLobbyLeave()
+      if (runLeaveAttached) {
+        runLeaveAttached = false
+        room.onLeave.remove(onRunLeave)
+      }
       for (const off of offs) off()
       if (endedTimer !== null) window.clearTimeout(endedTimer)
       endedTimer = null
@@ -502,6 +595,8 @@ export function GamePage() {
       setWeapons([])
       setPassives([])
       setHostToast(false)
+      setCoopSummary(false)
+      setCoopRoomPhase((room.state as CoopWireState | undefined)?.roomPhase ?? null)
       setLobbyPlayers(toLobbyPlayers((room.state as CoopWireState | undefined)?.lobby))
       coopTeardownRef.current = attachCoopListeners(room)
 
@@ -589,7 +684,12 @@ export function GamePage() {
   )
 
   const handleGameOver = useCallback((data: GameOverData) => {
-    // ACTIVE → GAME-OVER: capture final stats, show GameOverScreen
+    // ACTIVE → GAME-OVER: capture final stats, show GameOverScreen.
+    // Co-op full-squad defeat with the room still connected (06-15): the
+    // summary offers Back to Lobby / Leave Squad instead of Try Again.
+    setCoopSummary(
+      coopTeardownRef.current !== null && coopLiveRef.current && data.result === 'defeated'
+    )
     setFinalStats(data)
     setPhase('GAME-OVER')
   }, [])
@@ -598,6 +698,10 @@ export function GamePage() {
     (data: GameOverData) => {
       // Voluntary exit (GAME-12/16 survived path): leave the room first so the
       // server's onLeave marks result='survived', then show the summary locally.
+      // Co-op: the player left the squad — drop the room's listeners first so
+      // the summary is the plain (Try Again / Exit to Home) variant.
+      coopTeardownRef.current?.()
+      coopTeardownRef.current = null
       void roomRef.current?.leave()
       handleGameOver(data)
     },
@@ -611,19 +715,69 @@ export function GamePage() {
     // Co-op: drop the finished room's listeners (no-op after a solo run).
     coopTeardownRef.current?.()
     coopTeardownRef.current = null
+    setCoopSummary(false)
     setSelectedClassId(null)
     setPhase('CHARACTER_SELECT')
   }, [])
 
-  // Unmount: drop co-op listeners and abandon an un-started lobby seat (a
-  // started run is torn down by PhaserGame/GameScene as before).
+  /**
+   * Co-op summary → "Back to Lobby" (06-15). Only this player returns; enabled
+   * once the server reopened the room (roomPhase 'lobby'). The SAME room is
+   * re-attached so the run-start/ended one-shot flags re-arm for the next run
+   * and the lobby-only onLeave is active again. Ready is NOT sent: the player
+   * readies by hand (developer decision — absent players stay not-ready).
+   */
+  function handleReturnToLobby() {
+    const room = roomRef.current
+    if (!room) return
+    const state = room.state as CoopWireState | undefined
+    if (state?.roomPhase !== 'lobby') return
+    coopTeardownRef.current?.()
+    coopTeardownRef.current = null
+    setCoopSummary(false)
+    setWeapons([])
+    setPassives([])
+    setPendingChoices([])
+    setSlotFullPayload(null)
+    setFinalStats({ killCount: 0, elapsedMs: 0, level: 1, xp: 0 })
+    setCoopRoomPhase('lobby')
+    setLobbyPlayers(toLobbyPlayers(state.lobby))
+    coopTeardownRef.current = attachCoopListeners(room)
+    setPhase('LOBBY')
+  }
+
+  /** Co-op summary → "Leave Squad" (06-15): leave the room, back to the start screen. */
+  const handleLeaveSquad = useCallback(() => {
+    const room = roomRef.current
+    // Tear down first so the intentional leave is not treated as a drop.
+    coopTeardownRef.current?.()
+    coopTeardownRef.current = null
+    coopLiveRef.current = false
+    roomRef.current = null
+    setCoopSummary(false)
+    setCoopRoomPhase(null)
+    setLobbyPlayers([])
+    setLobbyRoomCode(null)
+    setHostToast(false)
+    setCreatedCode(null)
+    setJoinError(null)
+    setPhase('CHARACTER_SELECT')
+    void room?.leave()
+  }, [])
+
+  // Unmount: drop co-op listeners and abandon a co-op seat that is not inside
+  // a run — an un-started lobby, or the summary over a live room (06-15). A
+  // started run is torn down by PhaserGame/GameScene as before.
   useEffect(() => {
     unmountedRef.current = false
     return () => {
       unmountedRef.current = true
+      const hadCoopRoom = coopTeardownRef.current !== null
       coopTeardownRef.current?.()
       coopTeardownRef.current = null
-      if (phaseRef.current === 'LOBBY') void roomRef.current?.leave()
+      if (phaseRef.current === 'LOBBY' || (hadCoopRoom && phaseRef.current === 'GAME-OVER')) {
+        void roomRef.current?.leave()
+      }
     }
   }, [])
 
@@ -708,6 +862,15 @@ export function GamePage() {
             weaponStats: finalStats.weaponStats,
           }}
           onRetry={handleRetry}
+          coop={
+            coopSummary
+              ? {
+                  canReturn: coopRoomPhase === 'lobby',
+                  onReturnToLobby: handleReturnToLobby,
+                  onLeave: handleLeaveSquad,
+                }
+              : undefined
+          }
         />
       )}
     </div>

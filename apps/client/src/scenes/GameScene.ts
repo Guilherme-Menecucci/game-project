@@ -28,7 +28,12 @@
  *     via the same centroid camera anchored on the first living teammate.
  *   - Gameover: hp <= 0 is NOT game over (downed/eliminated); the run ends for
  *     this client on state.result === 'defeated' (full-squad defeat) or via the
- *     existing onLeave path (End Run / GamePage's 'ended' fallback).
+ *     existing onLeave path (End Run / connection loss).
+ *   - Full-squad defeat does NOT leave the room (06-15): the room survives and
+ *     reopens as a lobby, so the same Room instance hosts the next run with a
+ *     NEW Phaser game. Every room listener this scene adds is therefore removed
+ *     on shutdown AND destroy (PhaserGame unmounts via game.destroy(true), which
+ *     only emits DESTROY) — a run-1 closure must never fire into run 2.
  */
 import Phaser from 'phaser'
 import type { Room } from '@colyseus/sdk'
@@ -90,6 +95,7 @@ export class GameScene extends Phaser.Scene {
   private prevEnemyKeys = new Set<string>()
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private stateCallback?: (state: any) => void
+  private leaveCallback?: () => void
 
   private lastWeapons: string[] = []
   private lastPassives: string[] = []
@@ -143,15 +149,8 @@ export class GameScene extends Phaser.Scene {
     }
     this.room.onStateChange(this.stateCallback)
 
-    this.events.once('shutdown', () => {
-      if (this.stateCallback) {
-        this.room.onStateChange.remove(this.stateCallback)
-        this.stateCallback = undefined
-      }
-    })
-
     // Room disconnect = game over (server shutdown, player kicked, etc.)
-    this.room.onLeave(() => {
+    this.leaveCallback = () => {
       if (!this.gameOverEmitted) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const state = this.room.state as any
@@ -159,7 +158,28 @@ export class GameScene extends Phaser.Scene {
         const myPlayer = (state?.players as Map<string, any>)?.get(this.localPlayerId)
         this.emitGameOver(myPlayer)
       }
-    })
+    }
+    this.room.onLeave(this.leaveCallback)
+
+    // Detach from the room on scene shutdown AND on game destroy: PhaserGame
+    // unmounts with game.destroy(true), which emits DESTROY but never SHUTDOWN.
+    // A co-op room outlives this scene (06-15), so a stale closure would sync a
+    // destroyed scene / emit a run-1 gameover into run 2.
+    const detach = () => this.detachRoomListeners()
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, detach)
+    this.events.once(Phaser.Scenes.Events.DESTROY, detach)
+  }
+
+  /** Remove every listener this scene attached to the (possibly long-lived) room. */
+  private detachRoomListeners(): void {
+    if (this.stateCallback) {
+      this.room.onStateChange.remove(this.stateCallback)
+      this.stateCallback = undefined
+    }
+    if (this.leaveCallback) {
+      this.room.onLeave.remove(this.leaveCallback)
+      this.leaveCallback = undefined
+    }
   }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -538,6 +558,9 @@ export class GameScene extends Phaser.Scene {
       result,
       weaponStats,
     })
+    // Co-op full-squad defeat: the room survives and reopens as a lobby
+    // (06-15) — the summary is shown over a live room, so do NOT leave.
+    if (this.isCoop && syncedResult === 'defeated') return
     // Leave room so server stops ticking this client's player
     void this.room.leave()
   }
