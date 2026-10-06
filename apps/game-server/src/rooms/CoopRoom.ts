@@ -35,6 +35,14 @@
  * own local survived summary). The only room-level result is the sim's
  * full-squad 'defeated' (plan 06-03), after which roomPhase becomes 'ended' and
  * ticking stops; clients read state.result exactly as in solo.
+ *
+ * Return to lobby (plan 06-15): the room SURVIVES a full-squad defeat. Every
+ * connected client keeps its seat and shows its defeat summary; after
+ * RETURN_TO_LOBBY_DELAY_MS the server (never a client message) reopens the
+ * SAME room (same code) as a lobby — fresh run state, everyone not ready,
+ * classes kept, host = oldest connected client, room unlocked (public rooms
+ * reappear in GET /rooms). Each player returns to the lobby view on their own;
+ * a player still on the summary is simply not ready, which holds the next start.
  */
 import { matchMaker } from '@colyseus/core'
 import type { Client } from '@colyseus/core'
@@ -49,6 +57,7 @@ import {
 } from '@game/shared'
 import type { PlayerInput } from '@game/shared'
 import { BaseGameRoom } from './BaseGameRoom.js'
+import { mirrorStateToSchema } from './mirrorStateToSchema.js'
 import { LobbyPlayerSchema } from '../schema/GameSchema.js'
 import { generateRoomCode } from '../lib/roomCode.js'
 
@@ -92,6 +101,16 @@ export class CoopRoom extends BaseGameRoom {
   private votePaused = false
   /** The single active vote, if any (one at a time — T-06-15). */
   private pauseVote: PauseVote | null = null
+
+  /**
+   * Delay between full-squad defeat ('ended') and the return to lobby (06-15).
+   * Must span several patch intervals so every client receives the 'ended' +
+   * result 'defeated' patch (and captures its summary) before the run state is
+   * wiped. Instance field so tests can shorten it.
+   */
+  RETURN_TO_LOBBY_DELAY_MS = 2000
+  /** Pending return-to-lobby timer (room clock) — cleared on dispose. */
+  private returnTimer: { clear(): void } | null = null
 
   async onCreate(options?: unknown): Promise<void> {
     super.onCreate()
@@ -197,16 +216,20 @@ export class CoopRoom extends BaseGameRoom {
     // auto-unlock it (Pitfall 3, T-06-12).
     await this.lock()
 
-    // Lobby-time inputs never reach the first simulated tick.
+    // Lobby-time inputs never reach the first simulated tick, and the
+    // anti-replay watermark starts fresh at the run boundary (T-06-25: the new
+    // Phaser game restarts its seq at 0).
     this.pendingInputs.clear()
+    this.lastSeq.clear()
 
     for (const c of this.clients) {
       const entry = this.state.lobby.get(c.sessionId)
       this.seedPlayer(c, { classId: entry?.classId, weaponId: entry?.weaponId })
     }
 
-    // Difficulty snapshot (06-07 contract, OQ2): set exactly once here and
-    // never recomputed on disconnect.
+    // Difficulty snapshot (06-07 contract, OQ2): set exactly once per run here
+    // (from the CURRENT squad — a rematch re-snapshots, 06-15) and never
+    // recomputed on disconnect.
     this.plainState.mode = 'coop'
     this.plainState.playerCount = this.clients.length
 
@@ -363,7 +386,9 @@ export class CoopRoom extends BaseGameRoom {
    * Full-squad defeat (sim rule, plan 06-03: every player downed or eliminated).
    * Runs after the schema mirror, so state.result='defeated' is already on the
    * wire. Flip to 'ended' (blocks every further tick) and drop in-run timers so
-   * nothing mutates the finished run.
+   * nothing mutates the finished run. Then schedule the return to lobby (06-15)
+   * on the room clock — the delay lets every client receive the 'ended' patch
+   * and capture its summary before resetToLobby wipes the run.
    */
   protected override onDefeat(): void {
     if (this.roomPhase === 'ended') return
@@ -373,11 +398,87 @@ export class CoopRoom extends BaseGameRoom {
     this.upgradeTimeouts.clear()
     this.pendingUpgradeOptions.clear()
     this.queuedOffers.clear()
+
+    this.returnTimer?.clear()
+    this.returnTimer = this.clock.setTimeout(() => {
+      this.returnTimer = null
+      void this.resetToLobby().catch((err: unknown) => {
+        console.error('[CoopRoom] return to lobby failed', err)
+      })
+    }, this.RETURN_TO_LOBBY_DELAY_MS)
+  }
+
+  /**
+   * Reopen the finished room as a lobby (06-15). No-op unless the room is
+   * 'ended' with at least one connected client (a room everyone left disposes
+   * instead). Re-inits the run exactly like a fresh room (new seed, empty sim,
+   * mode/playerCount back to defaults — tryStartRun re-snapshots them), empties
+   * every schema collection in place, keeps the roster of connected clients
+   * with ready=false (classes and names kept), recomputes the host server-side
+   * (oldest connected client, T-06-26) and unlocks the room.
+   *
+   * The phase stays 'ended' across the unlock await, so no ready/start_run/join
+   * can interleave with the reset; the flip to 'lobby' is the last, synchronous
+   * step.
+   */
+  private async resetToLobby(): Promise<void> {
+    if (this.roomPhase !== 'ended' || this.clients.length === 0) return
+
+    // Run-1 timers/offers/votes can never fire into run 2 (T-06-24).
+    if (this.pauseVote) clearTimeout(this.pauseVote.timer)
+    this.pauseVote = null
+    this.votePaused = false
+    this.queuedOffers.clear()
+    this.resetRunBookkeeping()
+
+    // Fresh run state; mirroring the empty sim clears players/enemies/gems/
+    // projectiles/pickups/bosses in place and zeroes tick/elapsedMs/kills/result.
+    this.initRunState()
+    mirrorStateToSchema(this.plainState, this.state)
+
+    await this.unlock()
+    // The last client may have left (room disposing) during the await.
+    if (this.roomPhase !== 'ended' || this.clients.length === 0) return
+
+    // Roster = exactly the connected clients (leavers were already dropped by
+    // handleRunLeave; this also guards against any stale entry).
+    const connected = new Set(this.clients.map((c) => c.sessionId))
+    for (const sessionId of Array.from(this.state.lobby.keys())) {
+      if (!connected.has(sessionId)) this.state.lobby.delete(sessionId)
+    }
+    for (const c of this.clients) {
+      if (this.state.lobby.has(c.sessionId)) continue
+      const entry = new LobbyPlayerSchema()
+      entry.displayName = this.authDisplayName(c)
+      this.state.lobby.set(c.sessionId, entry)
+    }
+
+    let previousHostId: string | undefined
+    this.state.lobby.forEach((entry, sessionId) => {
+      if (entry.isHost) previousHostId = sessionId
+    })
+    const hostId = this.clients[0]!.sessionId
+    this.state.lobby.forEach((entry, sessionId) => {
+      entry.ready = false
+      entry.isHost = sessionId === hostId
+    })
+
+    this.setRoomPhase('lobby')
+
+    // Host migration (host left mid-run or during 'ended'): listing first, then
+    // the same host_changed broadcast the lobby migration uses.
+    if (previousHostId !== hostId) {
+      const hostEntry = this.state.lobby.get(hostId)
+      await this.setMetadata({ hostName: hostEntry?.displayName ?? 'Player' })
+      this.broadcast('host_changed', { hostSessionId: hostId })
+    }
   }
 
   onDispose(): void {
     if (this.pauseVote) clearTimeout(this.pauseVote.timer)
     this.pauseVote = null
+    this.returnTimer?.clear()
+    this.returnTimer = null
   }
 
   // ---------------------------------------------------------------------------

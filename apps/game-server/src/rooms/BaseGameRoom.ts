@@ -101,16 +101,48 @@ export abstract class BaseGameRoom extends Room<{ state: GameStateSchema }> {
   /** The run ended in defeat this tick (after the schema mirror). No-op by default. */
   protected onDefeat(): void {}
 
-  onCreate(): void {
-    this.setState(new GameStateSchema())
+  /**
+   * (Re)initialize the simulation state of a run exactly as a fresh room does:
+   * an empty PlainGameState (mode/playerCount at the makeInitialState defaults)
+   * and a PRNG over a NEW seed. onCreate calls it once; a room that hosts
+   * several runs (co-op return to lobby, 06-15) calls it at the run boundary.
+   * One seed feeds both prngSeed and the PRNG; a seed equal to the previous
+   * run's is bumped so a run is never a replay of the last one.
+   */
+  protected initRunState(): void {
+    let seed = Date.now()
+    if (this.plainState !== undefined && seed === this.plainState.prngSeed) seed += 1
 
     // makeInitialState seeds one player 'p1' for @game/shared movement tests.
     // The room must clear that phantom player so the Schema only tracks real clients.
-    this.plainState = makeInitialState(Date.now())
+    this.plainState = makeInitialState(seed)
     this.plainState.players.clear()
 
-    this.prng = mulberry32(Date.now())
+    this.prng = mulberry32(seed)
     this.pendingInputs = new Map()
+  }
+
+  /**
+   * Drop every piece of per-run bookkeeping owned by the base: pending picks
+   * and their auto-select timeouts, level tracking, rare-event scheduling,
+   * queued inputs and the per-session anti-replay watermark (T-06-25 — the
+   * client's seq restarts at 0 with each new Phaser game). Connection-scoped
+   * state (message rate windows) is kept.
+   */
+  protected resetRunBookkeeping(): void {
+    for (const timeout of this.upgradeTimeouts.values()) clearTimeout(timeout)
+    this.upgradeTimeouts.clear()
+    this.pendingUpgradeOptions.clear()
+    this.prevLevels.clear()
+    this.lastSeq.clear()
+    this.pendingInputs.clear()
+    this.rareEventElapsedAtLastCheck = 0
+  }
+
+  onCreate(): void {
+    this.setState(new GameStateSchema())
+
+    this.initRunState()
 
     // 20Hz fixed tick — setSimulationInterval calls this.tick every 50ms.
     // TICK_SEC * 1000 = 50ms interval. _dt is ignored for determinism (SC-2).
